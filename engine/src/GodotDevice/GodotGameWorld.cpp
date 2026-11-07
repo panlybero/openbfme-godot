@@ -62,6 +62,7 @@
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
+#include "Common/BuildAssistant.h"
 #include "Common/Player.h"
 #include "Common/Team.h"
 #include "GameClient/DrawableManager.h"
@@ -353,6 +354,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("build2_wall_span", "hub", "cap_template", "x0", "y0", "x1", "y1", "options"), &GameWorld::build2_wall_span);
 	ClassDB::bind_method(D_METHOD("build2_damage", "id", "amount"), &GameWorld::build2_damage);
 	ClassDB::bind_method(D_METHOD("build2_repair", "dozers", "target"), &GameWorld::build2_repair);
+	ClassDB::bind_method(D_METHOD("order_dozer_construct", "dozer_id", "template_name", "x", "y", "angle", "search_radius"), &GameWorld::order_dozer_construct, DEFVAL(0.0), DEFVAL(600.0));
+	ClassDB::bind_method(D_METHOD("get_object_commands", "id"), &GameWorld::get_object_commands);
 	ClassDB::bind_method(D_METHOD("get_stats"), &GameWorld::get_stats);
 	ClassDB::bind_method(D_METHOD("get_frame_timings"), &GameWorld::get_frame_timings);
 	ClassDB::bind_method(D_METHOD("set_parallel_views", "enabled"), &GameWorld::set_parallel_views); // lane PERF-CLIENT: the A/B switch (tests)
@@ -1141,7 +1144,7 @@ Dictionary GameWorld::start_new_game(const Dictionary &options)
 		progress = options["progress"];
 	}
 	m_testHooks = optBool(options, "test_hooks", false);
-	Dictionary report = load_internal(lo, toGodot(m_start->mapName), options, progress, true);
+	Dictionary report = load_internal(lo, toGodot(m_start->mapName), options, progress, optBool(options, "terrain", true));
 	// WOTR2 milestone 6: a War of the Ring battle is recorded too (replay format 12 carries its start, NewGameMessage::livingWorldBattle)
 	if ((bool)report.get("ok", false) && options.has("record") && !m_netStarted)
 	{
@@ -3337,6 +3340,16 @@ Dictionary GameWorld::get_object(int64_t id) const
 		d["modifiers"] = lists;
 	}
 	d["structure"] = o->isKindOfName("STRUCTURE");
+	d["hero"] = o->isKindOfName("HERO");
+	d["horde"] = o->isKindOfName("HORDE");
+	d["dozer"] = o->isKindOfName("DOZER");
+	d["infantry"] = o->isKindOfName("INFANTRY");
+	d["cavalry"] = o->isKindOfName("CAVALRY");
+	d["archer"] = o->isKindOfName("ARCHER");
+	d["machine"] = o->isKindOfName("MACHINE");
+	d["commandcenter"] = o->isKindOfName("COMMANDCENTER");
+	d["fs_factory"] = o->isKindOfName("FS_FACTORY");
+	d["fs_cash_producer"] = o->isKindOfName("FS_CASH_PRODUCER");
 	d["selectable"] = HudObjects::isSelectable(*o); // lane IDLE-1: the HUD's rule (a projectile, an AI marker, a ping, a NoSelect worker: a player cannot select it)
 	// MOVE-1: what the movement code says about the object, and the model conditions the logic has set on it
 	if (const AIUpdateInterface *ai = o->getAIUpdateInterface())
@@ -3344,13 +3357,23 @@ Dictionary GameWorld::get_object(int64_t id) const
 		d["has_ai"] = true;
 		d["moving"] = ai->isMoving();
 		d["idle"] = ai->isIdle();
+		d["attacking"] = ai->isAttacking();
+		d["victim_id"] = (int64_t)ai->currentVictimId();
+		d["target_horde_id"] = (int64_t)ai->targetHordeId();
 		d["ai_state"] = (int64_t)ai->currentStateId();
 		d["speed"] = ai->curLocomotorSpeed();
+		if (const AIStateMachine *sm = ai->stateMachineOrNull())
+		{
+			d["goal_x"] = sm->goalPosition().x;
+			d["goal_y"] = sm->goalPosition().y;
+			d["goal_object_id"] = (int64_t)sm->goalObjectID();
+		}
 		// lane BUILD-3 (U3): a builder's task as retail's idle-worker list sees it (the dozer primary machine's idle state, RW 0x88E582); "idle" stays the AI's
 		if (const DozerAIUpdate *dozer = dynamic_cast<const DozerAIUpdate *>(ai))
 		{
 			d["dozer_task"] = (int64_t)dozer->getCurrentTask();
 			d["dozer_task_pending"] = dozer->isAnyTaskPending();
+			d["dozer_target_id"] = (int64_t)dozer->taskTarget();
 			d["idle_worker"] = dozer->isIdleWorker();
 		}
 	}
@@ -4107,6 +4130,134 @@ bool GameWorld::build2_repair(const Array &dozers, int64_t target)
 	rep.appendObjectIDArgument((::ObjectID)target);
 	m_game->commands().append(rep);
 	return true;
+}
+
+Dictionary GameWorld::order_dozer_construct(int64_t dozer_id, const String &template_name, double x, double y, double angle, double search_radius)
+{
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	Dictionary r;
+	r["ok"] = false;
+	if (!m_game || !m_world)
+	{
+		r["error"] = "no game loaded";
+		return r;
+	}
+	::Object *builder = m_game->logic().findObjectByID((::ObjectID)dozer_id);
+	::Player *owner = builder ? builder->getControllingPlayer() : nullptr;
+	DozerAIUpdate *dozer = builder ? dynamic_cast<DozerAIUpdate *>(builder->getAIUpdateInterface()) : nullptr;
+	const ThingTemplate *rawTmpl = m_world->things().findTemplate(toNative(template_name));
+	const ThingTemplate *tmpl = rawTmpl ? rawTmpl->getFinalOverride() : nullptr;
+	if (!builder || builder->isDestroyed() || !owner || !dozer || !tmpl)
+	{
+		r["error"] = "invalid dozer, owner or structure template";
+		return r;
+	}
+	const CanMakeType cm = BuildAssistant::canMakeUnit(*builder, tmpl, -1);
+	if (cm != CANMAKE_OK)
+	{
+		r["error"] = String("canMakeUnit refused with code ") + String::num_int64((int64_t)cm);
+		r["can_make"] = (int64_t)cm;
+		return r;
+	}
+	const float ang = (float)angle;
+	Coord3D chosen{ (float)x, (float)y, m_game->logic().getGroundHeight((float)x, (float)y) };
+	bool found = dozer->siteIsLegal(*tmpl, chosen, ang, *owner);
+	const int maxRad = (int)search_radius;
+	for (int rad = 40; !found && rad <= maxRad; rad += 40)
+	{
+		for (int step = 0; step < 16; ++step)
+		{
+			const float theta = SimMath::mulf32((float)step, 0.39269908f);
+			const float cx = SimMath::addf32((float)x, SimMath::mulf32((float)rad, SimMath::cosf32(theta)));
+			const float cy = SimMath::addf32((float)y, SimMath::mulf32((float)rad, SimMath::sinf32(theta)));
+			Coord3D cand{ cx, cy, m_game->logic().getGroundHeight(cx, cy) };
+			if (dozer->siteIsLegal(*tmpl, cand, ang, *owner))
+			{
+				chosen = cand;
+				found = true;
+				break;
+			}
+		}
+	}
+	if (!found)
+	{
+		r["error"] = "no legal build site found near target";
+		return r;
+	}
+	const int playerIdx = owner->getPlayerIndex();
+	::GameMessage sel(MSG_CREATE_SELECTED_GROUP, playerIdx);
+	sel.appendBooleanArgument(true);
+	sel.appendObjectIDArgument(builder->getID());
+	m_game->commands().append(sel);
+	::GameMessage msg(MSG_DOZER_CONSTRUCT, playerIdx);
+	msg.appendIntegerArgument((int)tmpl->getTemplateID());
+	msg.appendLocationArgument(chosen);
+	msg.appendRealArgument(ang);
+	m_game->commands().append(msg);
+	r["ok"] = true;
+	r["player"] = (int64_t)playerIdx;
+	r["dozer_id"] = dozer_id;
+	r["template"] = template_name;
+	r["x"] = chosen.x;
+	r["y"] = chosen.y;
+	r["z"] = chosen.z;
+	return r;
+}
+
+Array GameWorld::get_object_commands(int64_t id) const
+{
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	Array out;
+	if (!m_game || !m_world || id <= 0)
+	{
+		return out;
+	}
+	::Object *o = m_game->logic().findObjectByID((::ObjectID)id);
+	if (!o || o->isDestroyed())
+	{
+		return out;
+	}
+	const std::string &setName = o->getCommandSetName();
+	const CommandSet *set = m_world->commands().findCommandSet(setName);
+	if (!set && setName.find('+') != std::string::npos)
+	{
+		set = m_world->commands().mergedCommandSet(setName);
+	}
+	if (!set)
+	{
+		return out;
+	}
+	const int cap = CommandSet::slotCapacity();
+	for (int i = 0; i < cap; ++i)
+	{
+		const CommandButton *b = set->getCommandButton(i);
+		if (!b)
+		{
+			continue;
+		}
+		b = b->getFinalOverride();
+		Dictionary d;
+		d["slot"] = (int64_t)i;
+		d["name"] = toGodot(b->m_name);
+		d["command"] = String(GUICommandName(b->m_command));
+		d["object"] = toGodot(b->m_objectName);
+		d["upgrade"] = toGodot(b->m_upgradeName);
+		d["special_power"] = toGodot(b->m_specialPowerName);
+		if (const ThingTemplate *tt = b->getThingTemplate())
+		{
+			const ThingTemplate *fo = tt->getFinalOverride();
+			const CanMakeType cm = BuildAssistant::canMakeUnit(*o, fo, -1);
+			d["can_make"] = (int64_t)cm;
+			d["enabled"] = cm == CANMAKE_OK;
+			d["cost"] = (int64_t)BuildAssistant::calcCostToBuild(*fo, o->getControllingPlayer(), o, -1);
+		}
+		else
+		{
+			d["enabled"] = true;
+		}
+		out.push_back(d);
+	}
+	return out;
 }
 
 Dictionary GameWorld::get_stats() const

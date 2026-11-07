@@ -498,6 +498,8 @@ public:
 	bool build2_wall_span(int64_t hub, const String &cap_template, double x0, double y0, double x1, double y1, int64_t options);
 	bool build2_damage(int64_t id, double amount);
 	bool build2_repair(const Array &dozers, int64_t target);
+	Dictionary order_dozer_construct(int64_t dozer_id, const String &template_name, double x, double y, double angle, double search_radius);
+	Array get_object_commands(int64_t id) const;
 
 	// Everything that is cheap to ask: { frame, alpha, state_hash, objects, drawables, dropped_frames, animated_drawables, last_advance_ms,
 	// last_logic_ms, last_sync_ms, instances, static, dynamic }

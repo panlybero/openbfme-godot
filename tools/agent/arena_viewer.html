@@ -1,0 +1,1618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>OpenBFME 2D Tactical Arena Monitor</title>
+<style>
+  :root {
+    --bg-dark: #0b0f17;
+    --bg-panel: #131a26;
+    --bg-card: #1a2333;
+    --border: #28354c;
+    --text: #e2e8f0;
+    --muted: #8b9bb4;
+    --p1: #38bdf8;
+    --p1-dim: rgba(56, 189, 248, 0.18);
+    --p2: #f87171;
+    --p2-dim: rgba(248, 113, 113, 0.18);
+    --gold: #fbbf24;
+    --green: #34d399;
+    --red: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    background: var(--bg-dark);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    width: 100%;
+    height: 100%;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Top Header */
+  header {
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    gap: 8px;
+    flex-shrink: 0;
+    z-index: 20;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    background: #1e293b;
+    border: 1px solid var(--border);
+  }
+  .badge.playing { background: rgba(52, 211, 153, 0.15); color: var(--green); border-color: rgba(52, 211, 153, 0.4); }
+  .badge.paused { background: rgba(251, 191, 36, 0.15); color: var(--gold); border-color: rgba(251, 191, 36, 0.4); }
+
+  .meta-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .meta-bar strong { color: var(--text); }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+  }
+  button {
+    background: var(--bg-card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  button:hover, button:active { background: #243047; border-color: #47597a; }
+  label.toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--muted);
+    cursor: pointer;
+    margin-left: 4px;
+    user-select: none;
+  }
+
+  /* Compact Mobile HUD Strip (always visible on mobile above map) */
+  .mobile-score-strip {
+    display: none;
+    background: #0f1623;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 10px;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .m-score-pill {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-card);
+    border-radius: 5px;
+    padding: 4px 8px;
+    border-left: 3px solid var(--p1);
+  }
+  .m-score-pill.p2 { border-left-color: var(--p2); }
+  .m-score-name { font-weight: 700; color: var(--text); }
+  .m-score-metrics { display: flex; gap: 7px; color: var(--muted); }
+  .m-score-metrics .gold { color: var(--gold); font-weight: 700; }
+
+  /* Main Layout (3-column on desktop, full-bleed active tab on mobile) */
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 300px minmax(320px, 1fr) 330px;
+    min-height: 0;
+    width: 100%;
+    position: relative;
+  }
+  .sidebar {
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 12px;
+    gap: 12px;
+    min-height: 0;
+  }
+  .sidebar.right {
+    border-right: none;
+    border-left: 1px solid var(--border);
+  }
+  .player-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .player-card.p1 { border-top: 3px solid var(--p1); }
+  .player-card.p2 { border-top: 3px solid var(--p2); }
+  .player-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .player-title {
+    font-weight: 700;
+    font-size: 13.5px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-box {
+    background: rgba(11, 15, 23, 0.55);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 5px;
+    padding: 5px 8px;
+  }
+  .stat-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .stat-val { font-size: 13.5px; font-weight: 700; margin-top: 2px; }
+  .stat-val.gold { color: var(--gold); }
+  .section-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+  .queue-item {
+    background: rgba(11, 15, 23, 0.65);
+    border-radius: 4px;
+    padding: 5px 7px;
+    font-size: 11px;
+  }
+  .queue-top {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 3px;
+  }
+  .progress-track {
+    height: 4px;
+    background: #1e293b;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--green);
+    transition: width 0.2s;
+  }
+
+  /* Center Map Stage */
+  .map-stage {
+    position: relative;
+    background: #08111a;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+  #tacticalCanvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: grab;
+    touch-action: none;
+  }
+  #tacticalCanvas:active { cursor: grabbing; }
+
+  .map-floating-tools {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 10;
+  }
+  .map-floating-tools button {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    background: rgba(19, 26, 38, 0.9);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+
+  .legend-bar {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    background: rgba(15, 22, 34, 0.88);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    font-size: 10.5px;
+    color: var(--muted);
+    pointer-events: none;
+    max-width: fit-content;
+  }
+  .legend-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+  /* Floating Mini Inspector Toast on Mobile when tapping an object */
+  .mobile-inspector-toast {
+    display: none;
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    right: 52px;
+    background: rgba(19, 26, 38, 0.94);
+    border: 1px solid #fbbf24;
+    border-radius: 7px;
+    padding: 7px 10px;
+    font-size: 11px;
+    z-index: 12;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+
+  .inspector-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .inspector-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .inspector-row:last-child { border-bottom: none; }
+  .log-panel {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .log-header {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+  .log-entries {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 10px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .log-line {
+    line-height: 1.35;
+    padding: 4px 6px;
+    border-radius: 4px;
+    background: rgba(11, 15, 23, 0.5);
+    border-left: 3px solid #475569;
+  }
+  .log-line.p1 { border-left-color: var(--p1); }
+  .log-line.p2 { border-left-color: var(--p2); }
+  .log-line.sys { border-left-color: var(--gold); }
+  .log-frame { color: var(--muted); margin-right: 5px; }
+
+  /* Mobile Bottom Navigation Bar */
+  .mobile-tabs {
+    display: none;
+    height: 48px;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+    grid-template-columns: repeat(3, 1fr);
+    flex-shrink: 0;
+    z-index: 25;
+  }
+  .mobile-tab-btn {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border-top: 2px solid transparent;
+  }
+  .mobile-tab-btn.active {
+    color: var(--p1);
+    border-top-color: var(--p1);
+    background: rgba(56, 189, 248, 0.07);
+  }
+
+  /* Responsive Mobile / Tablet Layout */
+  @media (max-width: 960px) {
+    header {
+      padding: 6px 10px;
+      gap: 6px;
+    }
+    .meta-bar {
+      font-size: 11px;
+      gap: 8px;
+      width: 100%;
+      justify-content: space-between;
+    }
+    .controls {
+      width: 100%;
+      justify-content: space-between;
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      padding-bottom: 2px;
+    }
+    .mobile-score-strip {
+      display: grid;
+    }
+    main {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+    }
+    .map-stage, .sidebar {
+      width: 100%;
+      height: 100%;
+      flex: 1;
+      border: none;
+    }
+    main[data-tab="map"] #playersSidebar,
+    main[data-tab="map"] #logsSidebar {
+      display: none !important;
+    }
+    main[data-tab="players"] #mapSection,
+    main[data-tab="players"] #logsSidebar {
+      display: none !important;
+    }
+    main[data-tab="logs"] #mapSection,
+    main[data-tab="logs"] #playersSidebar {
+      display: none !important;
+    }
+    .mobile-tabs {
+      display: grid;
+    }
+    .legend-bar {
+      font-size: 9.5px;
+      padding: 4px 7px;
+      gap: 6px 10px;
+      bottom: 6px;
+      left: 6px;
+      right: 6px;
+    }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>⚔️ OpenBFME Arena</span>
+      <span id="statusBadge" class="badge playing">CONNECTING</span>
+    </div>
+    <div class="meta-bar">
+      <span>Map: <strong id="mapName">-</strong></span>
+      <span>F:<strong id="frameVal">0</strong> (<span id="simTime">0:00</span>)</span>
+      <span>Spd:<strong id="speedVal">1.0x</strong></span>
+      <span>Obj:<strong id="objCountVal">0</strong></span>
+    </div>
+    <div class="controls">
+      <button id="btnPause" onclick="sendControl('toggle_pause')">⏸</button>
+      <button onclick="sendControl('step', {frames: 15})">+15f</button>
+      <button onclick="sendControl('set_speed', {scale: 1.0})">1x</button>
+      <button onclick="sendControl('set_speed', {scale: 2.0})">2x</button>
+      <button onclick="sendControl('set_speed', {scale: 4.0})">4x</button>
+      <button onclick="sendControl('set_speed', {scale: 8.0})">8x</button>
+      <button onclick="resetCamera()">🎯 Fit</button>
+      <label class="toggle"><input type="checkbox" id="chkTerrain" checked onchange="renderMap()" /> Map</label>
+      <label class="toggle"><input type="checkbox" id="chkTrails" checked onchange="renderMap()" /> Trails</label>
+      <label class="toggle"><input type="checkbox" id="chkVectors" checked onchange="renderMap()" /> Vectors</label>
+      <label class="toggle"><input type="checkbox" id="chkLabels" checked onchange="renderMap()" /> Labels</label>
+    </div>
+  </header>
+
+  <!-- Always-visible compact P1 vs P2 strip on mobile -->
+  <div class="mobile-score-strip">
+    <div class="m-score-pill p1">
+      <span class="m-score-name" id="mP1Faction">P1 Men</span>
+      <div class="m-score-metrics">
+        <span class="gold" id="mP1Money">$0</span>
+        <span id="mP1Army">0⚔</span>
+        <span id="mP1Structs">0🏰</span>
+      </div>
+    </div>
+    <div class="m-score-pill p2">
+      <span class="m-score-name" id="mP2Faction">P2 Isengard</span>
+      <div class="m-score-metrics">
+        <span class="gold" id="mP2Money">$0</span>
+        <span id="mP2Army">0⚔</span>
+        <span id="mP2Structs">0🏰</span>
+      </div>
+    </div>
+  </div>
+
+  <main id="mainContainer" data-tab="map">
+    <!-- Left Sidebar: Player 1 & Player 2 Scorecards -->
+    <aside class="sidebar" id="playersSidebar">
+      <div class="player-card p1" id="p1Card">
+        <div class="player-header">
+          <div class="player-title"><span class="dot" style="background: var(--p1)"></span> <span id="p1Name">Agent 1 (Player_1)</span></div>
+          <span class="badge" id="p1Faction">-</span>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-box"><div class="stat-label">Treasury</div><div class="stat-val gold" id="p1Money">$0</div></div>
+          <div class="stat-box"><div class="stat-label">Command Pts</div><div class="stat-val" id="p1CP">0 / 0</div></div>
+          <div class="stat-box"><div class="stat-label">Structures</div><div class="stat-val" id="p1Structs">0</div></div>
+          <div class="stat-box"><div class="stat-label">Army / Hordes</div><div class="stat-val" id="p1Army">0</div></div>
+          <div class="stat-box"><div class="stat-label">Earned / Spent</div><div class="stat-val" id="p1Eco" style="font-size:11px">0 / 0</div></div>
+          <div class="stat-box"><div class="stat-label">Power Pts</div><div class="stat-val" id="p1PP">0</div></div>
+        </div>
+        <div>
+          <div class="section-label">Active Production & Build</div>
+          <div class="queue-list" id="p1Queues"><div style="color:var(--muted);font-size:11px">Idle</div></div>
+        </div>
+      </div>
+
+      <div class="player-card p2" id="p2Card">
+        <div class="player-header">
+          <div class="player-title"><span class="dot" style="background: var(--p2)"></span> <span id="p2Name">Agent 2 (Player_2)</span></div>
+          <span class="badge" id="p2Faction">-</span>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-box"><div class="stat-label">Treasury</div><div class="stat-val gold" id="p2Money">$0</div></div>
+          <div class="stat-box"><div class="stat-label">Command Pts</div><div class="stat-val" id="p2CP">0 / 0</div></div>
+          <div class="stat-box"><div class="stat-label">Structures</div><div class="stat-val" id="p2Structs">0</div></div>
+          <div class="stat-box"><div class="stat-label">Army / Hordes</div><div class="stat-val" id="p2Army">0</div></div>
+          <div class="stat-box"><div class="stat-label">Earned / Spent</div><div class="stat-val" id="p2Eco" style="font-size:11px">0 / 0</div></div>
+          <div class="stat-box"><div class="stat-label">Power Pts</div><div class="stat-val" id="p2PP">0</div></div>
+        </div>
+        <div>
+          <div class="section-label">Active Production & Build</div>
+          <div class="queue-list" id="p2Queues"><div style="color:var(--muted);font-size:11px">Idle</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center: Interactive 2D Top-Down Tactical Canvas -->
+    <section class="map-stage" id="mapSection">
+      <canvas id="tacticalCanvas"></canvas>
+
+      <div class="mobile-inspector-toast" id="mobileToast" onclick="this.style.display='none'"></div>
+
+      <div class="map-floating-tools">
+        <button onclick="zoomBy(1.25)" title="Zoom In">＋</button>
+        <button onclick="zoomBy(1/1.25)" title="Zoom Out">－</button>
+        <button onclick="resetCamera()" title="Fit Map">🎯</button>
+      </div>
+
+      <div class="legend-bar">
+        <div class="legend-item">🏰 Fortress</div>
+        <div class="legend-item">⚔️ Barracks</div>
+        <div class="legend-item">🛡️ Battalion + Soldiers</div>
+        <div class="legend-item">⭐ Hero</div>
+        <div class="legend-item">🏕️ Creep/Neutral</div>
+        <div class="legend-item"><span style="color:#38bdf8">━━▸</span> Trail & Move</div>
+        <div class="legend-item"><span style="color:#ef4444">━━▸</span> Attack</div>
+      </div>
+    </section>
+
+    <!-- Right Sidebar: Object Inspector + Live Agent Action Log -->
+    <aside class="sidebar right" id="logsSidebar">
+      <div class="inspector-card">
+        <div class="section-label">Selected Unit / Structure Inspector</div>
+        <div id="inspectorBody" style="color: var(--muted); font-size: 11.5px; padding-top: 4px;">
+          Tap or click any unit, battalion, or building on the 2D tactical map to inspect its live engine state.
+        </div>
+      </div>
+
+      <div class="log-panel">
+        <div class="log-header">
+          <span>Live Agent Decisions & Orders</span>
+          <span id="logCount">0 events</span>
+        </div>
+        <div class="log-entries" id="logContainer"></div>
+      </div>
+    </aside>
+  </main>
+
+  <nav class="mobile-tabs">
+    <button class="mobile-tab-btn active" id="tabBtnMap" onclick="switchMobileTab('map')">🗺️ Tactical Map</button>
+    <button class="mobile-tab-btn" id="tabBtnPlayers" onclick="switchMobileTab('players')">⚔️ Armies & Eco</button>
+    <button class="mobile-tab-btn" id="tabBtnLogs" onclick="switchMobileTab('logs')">📜 Action Feed</button>
+  </nav>
+
+<script>
+const canvas = document.getElementById('tacticalCanvas');
+const ctx = canvas.getContext('2d');
+const mapSection = document.getElementById('mapSection');
+
+let latestState = null;
+let terrainData = null;
+let terrainCanvas = null;
+let p1NameGlobal = 'Player_1';
+let p2NameGlobal = 'Player_2';
+let selectedObjectId = null;
+let hoveredObjectId = null;
+
+// Per-unit breadcrumb trail history: Map<id, Array<{x, y, frame}>>
+const trailHistory = new Map();
+const MAX_TRAIL_POINTS = 24;
+
+// Camera transform (world -> canvas)
+let cam = {
+  zoom: 0.1,
+  panX: 0.0,
+  panY: 0.0,
+  initialized: false,
+  dragging: false,
+  dragStartX: 0,
+  dragStartY: 0
+};
+
+function switchMobileTab(tab) {
+  document.getElementById('mainContainer').setAttribute('data-tab', tab);
+  document.getElementById('tabBtnMap').classList.toggle('active', tab === 'map');
+  document.getElementById('tabBtnPlayers').classList.toggle('active', tab === 'players');
+  document.getElementById('tabBtnLogs').classList.toggle('active', tab === 'logs');
+  if (tab === 'map') {
+    requestAnimationFrame(() => {
+      resizeCanvas();
+      if (!cam.initialized || cam.zoom <= 0.01) resetCamera();
+      else renderMap();
+    });
+  }
+}
+
+function buildTerrainCanvas(td) {
+  if (!td || !td.heights || !td.cols || !td.rows) return;
+  const cols = td.cols;
+  const rows = td.rows;
+  const heights = td.heights;
+  const minZ = td.min_z ?? 0;
+  const maxZ = Math.max(minZ + 1, td.max_z ?? 100);
+
+  const off = document.createElement('canvas');
+  const texW = 512;
+  const texH = 512;
+  off.width = texW;
+  off.height = texH;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(texW, texH);
+  const data = img.data;
+
+  function sampleH(gx, gy) {
+    const cx = Math.max(0, Math.min(cols - 1, gx));
+    const cy = Math.max(0, Math.min(rows - 1, gy));
+    const x0 = Math.floor(cx), x1 = Math.min(cols - 1, x0 + 1);
+    const y0 = Math.floor(cy), y1 = Math.min(rows - 1, y0 + 1);
+    const fx = cx - x0, fy = cy - y0;
+    const h00 = heights[y0 * cols + x0];
+    const h10 = heights[y0 * cols + x1];
+    const h01 = heights[y1 * cols + x0];
+    const h11 = heights[y1 * cols + x1];
+    return (h00 * (1 - fx) + h10 * fx) * (1 - fy) + (h01 * (1 - fx) + h11 * fx) * fy;
+  }
+
+  const contourStep = Math.max(8, (maxZ - minZ) / 9);
+
+  for (let py = 0; py < texH; py++) {
+    const gy = (1 - py / (texH - 1)) * (rows - 1);
+    for (let px = 0; px < texW; px++) {
+      const gx = (px / (texW - 1)) * (cols - 1);
+      const h = sampleH(gx, gy);
+      const norm = Math.max(0, Math.min(1, (h - minZ) / (maxZ - minZ)));
+
+      const hR = sampleH(gx + 0.65, gy);
+      const hU = sampleH(gx, gy + 0.65);
+      const slope = ((hR - h) - (hU - h)) / Math.max(8, (maxZ - minZ) * 0.14);
+      const shade = Math.max(0.68, Math.min(1.35, 1.0 - slope * 0.45));
+
+      // High-contrast topographic relief palette (deep river basin -> lush valley -> highland -> mountain peak)
+      let r, g, b;
+      if (norm < 0.14) {
+        const t = norm / 0.14;
+        r = 16 + t * 14;
+        g = 38 + t * 22;
+        b = 58 - t * 12;
+      } else if (norm < 0.55) {
+        const t = (norm - 0.14) / 0.41;
+        r = 30 + t * 24;
+        g = 60 + t * 26;
+        b = 46 - t * 8;
+      } else if (norm < 0.82) {
+        const t = (norm - 0.55) / 0.27;
+        r = 54 + t * 32;
+        g = 86 + t * 12;
+        b = 38 + t * 14;
+      } else {
+        const t = (norm - 0.82) / 0.18;
+        r = 86 + t * 36;
+        g = 98 + t * 28;
+        b = 52 + t * 32;
+      }
+
+      const hRight = sampleH(gx + 0.9 * (cols / texW), gy);
+      const hDown = sampleH(gx, gy - 0.9 * (rows / texH));
+      const c0 = Math.floor(h / contourStep);
+      const isContour = (Math.floor(hRight / contourStep) !== c0) || (Math.floor(hDown / contourStep) !== c0);
+
+      const idx = (py * texW + px) * 4;
+      if (isContour) {
+        data[idx] = Math.min(255, r * shade + 26);
+        data[idx + 1] = Math.min(255, g * shade + 30);
+        data[idx + 2] = Math.min(255, b * shade + 24);
+        data[idx + 3] = 240;
+      } else {
+        data[idx] = Math.min(255, r * shade);
+        data[idx + 1] = Math.min(255, g * shade);
+        data[idx + 2] = Math.min(255, b * shade);
+        data[idx + 3] = 230;
+      }
+    }
+  }
+  octx.putImageData(img, 0, 0);
+
+  // Draw forest / tree canopy dots onto cached terrain bitmap
+  const trees = td.trees || [];
+  const spanX = Math.max(1, (td.max_x - td.min_x));
+  const spanY = Math.max(1, (td.max_y - td.min_y));
+  octx.fillStyle = 'rgba(34, 139, 74, 0.65)';
+  octx.strokeStyle = 'rgba(12, 56, 28, 0.75)';
+  octx.lineWidth = 0.9;
+  for (const [tx, ty] of trees) {
+    const px = ((tx - td.min_x) / spanX) * texW;
+    const py = (1 - (ty - td.min_y) / spanY) * texH;
+    octx.beginPath();
+    octx.arc(px, py, 2.6, 0, Math.PI * 2);
+    octx.fill();
+    octx.stroke();
+  }
+
+  terrainCanvas = off;
+}
+
+function resizeCanvas() {
+  const rect = mapSection.getBoundingClientRect();
+  if (rect.width < 40 || rect.height < 40) return;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (latestState && (!cam.initialized || cam.zoom <= 0.01)) {
+    resetCamera();
+  } else {
+    renderMap();
+  }
+}
+window.addEventListener('resize', resizeCanvas);
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => resizeCanvas()).observe(mapSection);
+}
+
+function resetCamera() {
+  if (!latestState) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.width / dpr;
+  const h = canvas.height / dpr;
+  if (w < 40 || h < 40) return;
+
+  const ext = getEffectiveBounds(latestState);
+  const mapW = Math.max(500, ext.maxX - ext.minX);
+  const mapH = Math.max(500, ext.maxY - ext.minY);
+  const pad = Math.min(28, Math.min(w, h) * 0.06);
+  cam.zoom = Math.max(0.02, Math.min((w - pad * 2) / mapW, (h - pad * 2) / mapH));
+  cam.panX = (w - mapW * cam.zoom) * 0.5 - ext.minX * cam.zoom;
+  cam.panY = (h - mapH * cam.zoom) * 0.5 + ext.maxY * cam.zoom;
+  cam.initialized = true;
+  renderMap();
+}
+
+function zoomBy(factor) {
+  const dpr = window.devicePixelRatio || 1;
+  const cx = (canvas.width / dpr) * 0.5;
+  const cy = (canvas.height / dpr) * 0.5;
+  const before = screenToWorld(cx, cy);
+  cam.zoom = Math.max(0.03, Math.min(2.5, cam.zoom * factor));
+  cam.panX = cx - before.x * cam.zoom;
+  cam.panY = cy + before.y * cam.zoom;
+  renderMap();
+}
+
+function getEffectiveBounds(st) {
+  if (terrainData && terrainData.max_x > 200 && terrainData.max_y > 200) {
+    return {
+      minX: terrainData.min_x || 0,
+      minY: terrainData.min_y || 0,
+      maxX: terrainData.max_x,
+      maxY: terrainData.max_y
+    };
+  }
+  const objs = st.objects || [];
+  if (objs.length === 0) {
+    const mw = (st.map_extent && st.map_extent.width) || 4500;
+    const mh = (st.map_extent && st.map_extent.height) || 4500;
+    return { minX: 0, minY: 0, maxX: mw, maxY: mh };
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const o of objs) {
+    if (o.x < minX) minX = o.x;
+    if (o.y < minY) minY = o.y;
+    if (o.x > maxX) maxX = o.x;
+    if (o.y > maxY) maxY = o.y;
+  }
+  const margin = 350;
+  return {
+    minX: Math.max(0, minX - margin),
+    minY: Math.max(0, minY - margin),
+    maxX: maxX + margin,
+    maxY: maxY + margin
+  };
+}
+
+function worldToScreen(wx, wy) {
+  return {
+    x: cam.panX + wx * cam.zoom,
+    y: cam.panY - wy * cam.zoom
+  };
+}
+
+function screenToWorld(sx, sy) {
+  return {
+    x: (sx - cam.panX) / cam.zoom,
+    y: (cam.panY - sy) / cam.zoom
+  };
+}
+
+// Mouse Pan & Zoom
+canvas.addEventListener('mousedown', (e) => {
+  cam.dragging = true;
+  cam.dragStartX = e.clientX;
+  cam.dragStartY = e.clientY;
+});
+
+window.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  if (cam.dragging) {
+    const dx = e.clientX - cam.dragStartX;
+    const dy = e.clientY - cam.dragStartY;
+    cam.dragStartX = e.clientX;
+    cam.dragStartY = e.clientY;
+    cam.panX += dx;
+    cam.panY += dy;
+    renderMap();
+    return;
+  }
+  if (latestState && mx >= 0 && my >= 0 && mx <= rect.width && my <= rect.height) {
+    const hit = pickObjectAt(mx, my);
+    if ((hit ? hit.id : null) !== hoveredObjectId) {
+      hoveredObjectId = hit ? hit.id : null;
+      renderMap();
+    }
+  }
+});
+
+window.addEventListener('mouseup', (e) => {
+  if (cam.dragging) {
+    const moved = Math.hypot(e.clientX - cam.dragStartX, e.clientY - cam.dragStartY);
+    cam.dragging = false;
+    if (moved < 6) {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      if (mx >= 0 && my >= 0 && mx <= rect.width && my <= rect.height) {
+        selectObjectAtScreen(mx, my);
+      }
+    }
+  }
+});
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const before = screenToWorld(mx, my);
+  const factor = e.deltaY < 0 ? 1.18 : (1 / 1.18);
+  cam.zoom = Math.max(0.03, Math.min(2.5, cam.zoom * factor));
+  cam.panX = mx - before.x * cam.zoom;
+  cam.panY = my + before.y * cam.zoom;
+  renderMap();
+}, { passive: false });
+
+// Mobile Touch Pan, Pinch-to-Zoom & Tap Selection
+let touchState = {
+  mode: 'none',
+  startX: 0,
+  startY: 0,
+  lastX: 0,
+  lastY: 0,
+  pinchDist: 0
+};
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (e.touches.length === 1) {
+    touchState.mode = 'pan';
+    touchState.startX = touchState.lastX = e.touches[0].clientX;
+    touchState.startY = touchState.lastY = e.touches[0].clientY;
+  } else if (e.touches.length === 2) {
+    touchState.mode = 'pinch';
+    touchState.pinchDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  if (touchState.mode === 'pan' && e.touches.length === 1) {
+    const tx = e.touches[0].clientX;
+    const ty = e.touches[0].clientY;
+    cam.panX += tx - touchState.lastX;
+    cam.panY += ty - touchState.lastY;
+    touchState.lastX = tx;
+    touchState.lastY = ty;
+    renderMap();
+  } else if (e.touches.length === 2) {
+    const newDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    if (touchState.pinchDist > 10 && newDist > 10) {
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) * 0.5 - rect.left;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) * 0.5 - rect.top;
+      const before = screenToWorld(midX, midY);
+      const factor = newDist / touchState.pinchDist;
+      cam.zoom = Math.max(0.03, Math.min(2.5, cam.zoom * factor));
+      cam.panX = midX - before.x * cam.zoom;
+      cam.panY = midY + before.y * cam.zoom;
+      renderMap();
+    }
+    touchState.pinchDist = newDist;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  if (touchState.mode === 'pan' && e.changedTouches.length === 1) {
+    const moved = Math.hypot(
+      e.changedTouches[0].clientX - touchState.startX,
+      e.changedTouches[0].clientY - touchState.startY
+    );
+    if (moved < 12) {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.changedTouches[0].clientX - rect.left;
+      const my = e.changedTouches[0].clientY - rect.top;
+      selectObjectAtScreen(mx, my);
+    }
+  }
+  if (e.touches.length === 0) touchState.mode = 'none';
+}, { passive: false });
+
+function selectObjectAtScreen(mx, my) {
+  const hit = pickObjectAt(mx, my);
+  selectedObjectId = hit ? hit.id : null;
+  updateInspector();
+  const toast = document.getElementById('mobileToast');
+  if (hit && window.innerWidth <= 960) {
+    toast.style.display = 'block';
+    toast.innerHTML = `<strong>${shortName(hit.template)} #${hit.id}</strong> (${hit.owner}) — HP ${Math.round(hit.health)}/${Math.round(hit.max_health)} ${hit.attacking ? '⚔️ Attacking' : (hit.moving ? '🏃 Moving' : '')}`;
+  } else if (toast) {
+    toast.style.display = 'none';
+  }
+  renderMap();
+}
+
+function pickObjectAt(sx, sy) {
+  if (!latestState || !latestState.objects) return null;
+  let best = null;
+  let bestDist = 22;
+  for (const o of latestState.objects) {
+    const p = worldToScreen(o.x, o.y);
+    const d = Math.hypot(p.x - sx, p.y - sy);
+    if (d < bestDist) {
+      bestDist = d;
+      best = o;
+    }
+  }
+  return best;
+}
+
+function shortName(tmpl) {
+  if (!tmpl) return '?';
+  return tmpl
+    .replace(/^(Gondor|Rohan|Men|Elven|Dwarven|Isengard|Mordor|Goblin|Wild|Angmar)/, '')
+    .replace(/Horde$/, '')
+    .replace(/Foundation$/, '');
+}
+
+function playerColor(owner) {
+  if (owner === p1NameGlobal) return '#38bdf8';
+  if (owner === p2NameGlobal) return '#f87171';
+  if (owner && owner.toLowerCase().includes('creep')) return '#fb923c';
+  return '#a3e635';
+}
+
+function updateTrailHistory(st) {
+  if (!st || !st.objects) return;
+  const frame = st.frame || 0;
+  const aliveIds = new Set();
+  for (const o of st.objects) {
+    aliveIds.add(o.id);
+    if (o.structure) continue;
+    let hist = trailHistory.get(o.id);
+    if (!hist) {
+      hist = [];
+      trailHistory.set(o.id, hist);
+    }
+    const last = hist[hist.length - 1];
+    if (!last || Math.hypot(o.x - last.x, o.y - last.y) > 12) {
+      hist.push({ x: o.x, y: o.y, frame });
+      if (hist.length > MAX_TRAIL_POINTS) hist.shift();
+    }
+  }
+  for (const id of trailHistory.keys()) {
+    if (!aliveIds.has(id)) trailHistory.delete(id);
+  }
+}
+
+function drawArrowhead(ctx, fromX, fromY, toX, toY, size, color) {
+  const angle = Math.atan2(toY - fromY, toX - fromX);
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.translate(toX, toY);
+  ctx.rotate(angle);
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-size * 1.6, -size * 0.85);
+  ctx.lineTo(-size * 1.2, 0);
+  ctx.lineTo(-size * 1.6, size * 0.85);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function renderMap() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.width / dpr;
+  const h = canvas.height / dpr;
+  if (w < 20 || h < 20) return;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!latestState) return;
+  const objs = latestState.objects || [];
+  const objById = new Map();
+  for (const o of objs) objById.set(o.id, o);
+
+  const showTerrain = document.getElementById('chkTerrain') ? document.getElementById('chkTerrain').checked : true;
+  const showTrails = document.getElementById('chkTrails') ? document.getElementById('chkTrails').checked : true;
+  const showVectors = document.getElementById('chkVectors').checked;
+  const showLabels = document.getElementById('chkLabels').checked;
+
+  // 0. Pre-rendered Topographic Relief, Contours & Forest Canopy
+  const ext = getEffectiveBounds(latestState);
+  if (showTerrain && terrainCanvas && terrainData) {
+    const topLeft = worldToScreen(terrainData.min_x, terrainData.max_y);
+    const botRight = worldToScreen(terrainData.max_x, terrainData.min_y);
+    ctx.drawImage(terrainCanvas, topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
+  }
+
+  // 1. Tactical Grid
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+  ctx.lineWidth = 1;
+  const step = 500;
+  const startGX = Math.floor(ext.minX / step) * step;
+  const endGX = Math.ceil(ext.maxX / step) * step;
+  const startGY = Math.floor(ext.minY / step) * step;
+  const endGY = Math.ceil(ext.maxY / step) * step;
+
+  for (let gx = startGX; gx <= endGX; gx += step) {
+    const p0 = worldToScreen(gx, startGY);
+    const p1 = worldToScreen(gx, endGY);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.stroke();
+  }
+  for (let gy = startGY; gy <= endGY; gy += step) {
+    const p0 = worldToScreen(startGX, gy);
+    const p1 = worldToScreen(endGX, gy);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.stroke();
+  }
+
+  // 2. Base Influence Halos around CommandCenters
+  for (const o of objs) {
+    if (o.commandcenter) {
+      const p = worldToScreen(o.x, o.y);
+      const r = 380 * cam.zoom;
+      const grad = ctx.createRadialGradient(p.x, p.y, r * 0.1, p.x, p.y, r);
+      if (o.owner === p1NameGlobal) {
+        grad.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
+        grad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+      } else {
+        grad.addColorStop(0, 'rgba(248, 113, 113, 0.22)');
+        grad.addColorStop(1, 'rgba(248, 113, 113, 0.0)');
+      }
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // 2.5. Troop Breadcrumb Movement Trails (Past Path Ribbons)
+  if (showTrails) {
+    for (const o of objs) {
+      if (o.structure) continue;
+      const hist = trailHistory.get(o.id);
+      if (!hist || hist.length < 2) continue;
+      const isP1 = o.owner === p1NameGlobal;
+      const isP2 = o.owner === p2NameGlobal;
+      const rgb = isP1 ? '56, 189, 248' : (isP2 ? '248, 113, 113' : '251, 146, 60');
+
+      for (let i = 1; i < hist.length; i++) {
+        const a = worldToScreen(hist[i - 1].x, hist[i - 1].y);
+        const b = worldToScreen(hist[i].x, hist[i].y);
+        const t = i / hist.length;
+        ctx.strokeStyle = `rgba(${rgb}, ${(0.18 + 0.62 * t).toFixed(2)})`;
+        ctx.lineWidth = (o.horde || o.hero ? 3.0 : 1.6) * t + 0.8;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // 3. Movement, Rally, Builder, and Attack Vectors
+  if (showVectors) {
+    for (const o of objs) {
+      const p = worldToScreen(o.x, o.y);
+
+      if (o.structure && o.rally_x !== undefined && o.rally_y !== undefined) {
+        const rp = worldToScreen(o.rally_x, o.rally_y);
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.4)';
+        ctx.setLineDash([2, 4]);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(rp.x, rp.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(52, 211, 153, 0.85)';
+        ctx.font = '10px sans-serif';
+        ctx.fillText('⚑', rp.x - 3, rp.y + 3);
+      }
+
+      const targetId = o.victim_id || o.target_horde_id || 0;
+      if (targetId > 0 && objById.has(targetId)) {
+        const tgt = objById.get(targetId);
+        const tp = worldToScreen(tgt.x, tgt.y);
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.9)';
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(tp.x, tp.y);
+        ctx.stroke();
+        drawArrowhead(ctx, p.x, p.y, (p.x + tp.x) * 0.5, (p.y + tp.y) * 0.5, 4.8, 'rgba(239, 68, 68, 0.98)');
+      } else if (o.dozer && o.dozer_target_id > 0 && objById.has(o.dozer_target_id)) {
+        const tgt = objById.get(o.dozer_target_id);
+        const tp = worldToScreen(tgt.x, tgt.y);
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.75)';
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(tp.x, tp.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (o.moving && (Math.abs(o.goal_x) > 1 || Math.abs(o.goal_y) > 1)) {
+        const gp = worldToScreen(o.goal_x, o.goal_y);
+        const moveCol = o.owner === p1NameGlobal ? 'rgba(56, 189, 248, 0.65)' : 'rgba(248, 113, 113, 0.65)';
+        ctx.strokeStyle = moveCol;
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(gp.x, gp.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (Math.hypot(gp.x - p.x, gp.y - p.y) > 18) {
+          drawArrowhead(ctx, p.x, p.y, gp.x, gp.y, 4.5, moveCol);
+        }
+      }
+    }
+  }
+
+  // 4. Structures first, then Units on top
+  const structures = objs.filter(o => o.structure);
+  const units = objs.filter(o => !o.structure);
+
+  for (const o of structures) {
+    drawStructure(o, showLabels);
+  }
+  for (const o of units) {
+    drawUnit(o, showLabels);
+  }
+
+  // 5. Projectiles in flight with velocity streaks
+  const projs = latestState.projectiles || [];
+  for (const pr of projs) {
+    const p = worldToScreen(pr.x, pr.y);
+    if (pr.prev_x !== undefined && pr.prev_y !== undefined) {
+      const pp = worldToScreen(pr.prev_x, pr.prev_y);
+      ctx.strokeStyle = 'rgba(253, 224, 71, 0.75)';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(pp.x, pp.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#fde047';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawStructure(o, showLabels) {
+  const p = worldToScreen(o.x, o.y);
+  const col = playerColor(o.owner);
+  const isSelected = o.id === selectedObjectId;
+  const isHovered = o.id === hoveredObjectId;
+  const isPlayable = o.playable_owner !== false;
+
+  let size = o.commandcenter ? 15 : (o.fs_factory ? 12 : (isPlayable ? 9.5 : 7.5));
+  ctx.save();
+  ctx.translate(p.x, p.y);
+
+  if (isSelected || isHovered) {
+    ctx.strokeStyle = isSelected ? '#fbbf24' : '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, size + 6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  if (o.commandcenter) {
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = (Math.PI / 4) * i + Math.PI / 8;
+      const rx = Math.cos(a) * size;
+      const ry = Math.sin(a) * size;
+      if (i === 0) ctx.moveTo(rx, ry); else ctx.lineTo(rx, ry);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = o.under_construction ? 'rgba(15, 23, 42, 0.5)' : '#0f172a';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = o.fs_factory ? 2.2 : 1.5;
+    ctx.beginPath();
+    ctx.rect(-size, -size, size * 2, size * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = col;
+  ctx.font = 'bold 9.5px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  let glyph = isPlayable ? '■' : '▲';
+  if (o.commandcenter) glyph = '★';
+  else if (o.fs_factory) glyph = '⚔';
+  else if (o.fs_cash_producer) glyph = '$';
+  ctx.fillText(glyph, 0, 0.5);
+
+  if (o.under_construction) {
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    const pct = Math.max(0, Math.min(100, o.construction_percent || 0)) / 100;
+    ctx.arc(0, 0, size + 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pct);
+    ctx.stroke();
+  }
+
+  if (o.max_health > 0 && isPlayable) {
+    const hpRatio = Math.max(0, Math.min(1, o.health / o.max_health));
+    const bw = size * 2.2;
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(-bw / 2, -size - 6, bw, 3);
+    ctx.fillStyle = hpRatio > 0.5 ? '#34d399' : (hpRatio > 0.25 ? '#fbbf24' : '#ef4444');
+    ctx.fillRect(-bw / 2, -size - 6, bw * hpRatio, 3);
+  }
+
+  if (showLabels && (isPlayable || isSelected || isHovered)) {
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = '9.5px sans-serif';
+    ctx.textAlign = 'center';
+    let label = shortName(o.template);
+    if (o.under_construction) label += ` (${Math.round(o.construction_percent)}%)`;
+    ctx.fillText(label, 0, size + 10);
+  }
+
+  ctx.restore();
+}
+
+function drawUnit(o, showLabels) {
+  const p = worldToScreen(o.x, o.y);
+  const col = playerColor(o.owner);
+  const isSelected = o.id === selectedObjectId;
+  const isHovered = o.id === hoveredObjectId;
+  const isPlayable = o.playable_owner !== false;
+
+  if (o.horde && Array.isArray(o.member_positions) && o.member_positions.length > 0) {
+    ctx.save();
+    ctx.fillStyle = col;
+    ctx.strokeStyle = 'rgba(11, 15, 23, 0.9)';
+    ctx.lineWidth = 0.8;
+    const dotR = Math.max(2.0, Math.min(3.8, 7.0 * cam.zoom));
+    for (const [mx, my] of o.member_positions) {
+      const mp = worldToScreen(mx, my);
+      ctx.beginPath();
+      ctx.arc(mp.x, mp.y, dotR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  let r = o.hero ? 9 : (o.horde ? 8.5 : (o.dozer ? 5.5 : 5.5));
+  ctx.save();
+  ctx.translate(p.x, p.y);
+
+  if ((o.horde || o.hero) && o.angle !== undefined) {
+    const screenAngle = -o.angle;
+    const noseDist = o.horde ? 13 : 11;
+    const nx = Math.cos(screenAngle) * noseDist;
+    const ny = Math.sin(screenAngle) * noseDist;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(nx, ny, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (isSelected || isHovered) {
+    ctx.strokeStyle = isSelected ? '#fbbf24' : '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  if (o.attacking) {
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.92)';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  if (o.horde) {
+    ctx.fillStyle = col;
+    ctx.strokeStyle = '#0b0f17';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(-11, -7, 22, 14, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#0b0f17';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${o.members_count || 1}`, 0, 0.5);
+  } else if (o.hero) {
+    ctx.fillStyle = '#fbbf24';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#0b0f17';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('★', 0, 0.5);
+  } else {
+    ctx.fillStyle = o.dozer ? '#e2e8f0' : col;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  if (o.max_health > 0 && (isPlayable || o.health < o.max_health)) {
+    const hpRatio = Math.max(0, Math.min(1, o.health / o.max_health));
+    const bw = 18;
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(-bw / 2, -r - 6, bw, 3);
+    ctx.fillStyle = hpRatio > 0.5 ? '#34d399' : (hpRatio > 0.25 ? '#fbbf24' : '#ef4444');
+    ctx.fillRect(-bw / 2, -r - 6, bw * hpRatio, 3);
+  }
+
+  if (showLabels && (o.horde || o.hero) && isPlayable) {
+    ctx.fillStyle = o.hero ? '#fde047' : '#e2e8f0';
+    ctx.font = o.hero ? 'bold 10px sans-serif' : '9.5px sans-serif';
+    ctx.textAlign = 'center';
+    let lbl = shortName(o.template);
+    if (o.rank > 1) lbl += ` R${o.rank}`;
+    ctx.fillText(lbl, 0, r + 10);
+  }
+
+  ctx.restore();
+}
+
+function updateDashboard(data) {
+  latestState = data.state;
+  if (!latestState) return;
+  if (!cam.initialized || cam.zoom <= 0.01) {
+    resizeCanvas();
+  }
+
+  const st = latestState;
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = st.paused ? 'PAUSED' : 'LIVE';
+  badge.className = 'badge ' + (st.paused ? 'paused' : 'playing');
+  document.getElementById('btnPause').textContent = st.paused ? '▶' : '⏸';
+
+  const mapRaw = st.map || '-';
+  const mapShort = mapRaw.split('/').pop().replace('.map', '');
+  document.getElementById('mapName').textContent = mapShort;
+  document.getElementById('frameVal').textContent = st.frame || 0;
+  const totalSec = Math.floor((st.frame || 0) / 5);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  document.getElementById('simTime').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+  document.getElementById('speedVal').textContent = `${(st.time_scale || 1).toFixed(1)}x`;
+  document.getElementById('objCountVal').textContent = (st.objects || []).length;
+
+  const playable = (st.players || []).filter(p => p.playable);
+  p1NameGlobal = (data.agent1_info && data.agent1_info.player_name) || (playable[0] && playable[0].name) || 'Player_1';
+  p2NameGlobal = (data.agent2_info && data.agent2_info.player_name) || (playable[1] && playable[1].name) || 'Player_2';
+
+  updateTrailHistory(st);
+  updatePlayerCard('p1', 'mP1', p1NameGlobal, st, data.agent1_info);
+  updatePlayerCard('p2', 'mP2', p2NameGlobal, st, data.agent2_info);
+  updateInspector();
+  updateLogs(data.logs || []);
+  renderMap();
+}
+
+function updatePlayerCard(prefix, mobilePrefix, playerName, st, agentInfo) {
+  const players = st.players || [];
+  const p = players.find(x => x.name === playerName) || {};
+  const objs = (st.objects || []).filter(o => o.owner === playerName);
+  const structs = objs.filter(o => o.structure);
+  const hordes = objs.filter(o => o.horde);
+  const heroes = objs.filter(o => o.hero && !o.structure);
+  const soldiers = hordes.reduce((acc, h) => acc + (h.members_count || 0), 0);
+
+  let faction = (agentInfo && agentInfo.faction) || '';
+  if (!faction && objs.length > 0) {
+    const m = objs[0].template.match(/^(Gondor|Rohan|Men|Elven|Dwarven|Isengard|Mordor|Goblin|Wild|Angmar)/);
+    if (m) faction = m[1];
+  }
+
+  document.getElementById(`${prefix}Name`).textContent = (agentInfo && agentInfo.label) || `${playerName}`;
+  document.getElementById(`${prefix}Faction`).textContent = faction || 'Active';
+  document.getElementById(`${prefix}Money`).textContent = `$${p.money ?? 0}`;
+  document.getElementById(`${prefix}CP`).textContent = `${p.cp_used ?? p.command_points_used ?? 0} / ${p.cp_limit ?? p.command_points_limit ?? 0}`;
+  document.getElementById(`${prefix}Structs`).textContent = `${structs.length}`;
+  document.getElementById(`${prefix}Army`).textContent = `${hordes.length} (${soldiers}⚔` + (heroes.length ? ` +${heroes.length}★)` : ')');
+  document.getElementById(`${prefix}Eco`).textContent = `$${p.earned ?? 0} / $${p.spent ?? 0}`;
+  document.getElementById(`${prefix}PP`).textContent = `${p.power_points ?? 0}`;
+
+  // Mobile strip update
+  const mFac = document.getElementById(`${mobilePrefix}Faction`);
+  if (mFac) {
+    mFac.textContent = `${prefix.toUpperCase()} ${faction || ''}`;
+    document.getElementById(`${mobilePrefix}Money`).textContent = `$${p.money ?? 0}`;
+    document.getElementById(`${mobilePrefix}Army`).textContent = `${soldiers}⚔` + (heroes.length ? `+${heroes.length}★` : '');
+    document.getElementById(`${mobilePrefix}Structs`).textContent = `${structs.length}🏰`;
+  }
+
+  const qEl = document.getElementById(`${prefix}Queues`);
+  const items = [];
+  for (const s of structs) {
+    if (s.under_construction) {
+      items.push({
+        label: `🔨 ${shortName(s.template)}`,
+        pct: Math.round(s.construction_percent || 0)
+      });
+    }
+    if (s.production_queue && s.production_queue.length > 0) {
+      for (const q of s.production_queue) {
+        items.push({
+          label: `⚔️ ${shortName(q.template || q.upgrade || 'Item')}`,
+          pct: Math.round(q.percent || 0)
+        });
+      }
+    }
+  }
+  if (items.length === 0) {
+    qEl.innerHTML = '<div style="color:var(--muted);font-size:11px">No active builds</div>';
+  } else {
+    qEl.innerHTML = items.map(it => `
+      <div class="queue-item">
+        <div class="queue-top"><span>${it.label}</span><span>${it.pct}%</span></div>
+        <div class="progress-track"><div class="progress-fill" style="width:${it.pct}%"></div></div>
+      </div>
+    `).join('');
+  }
+}
+
+function updateInspector() {
+  const el = document.getElementById('inspectorBody');
+  if (!latestState || !selectedObjectId) return;
+  const o = (latestState.objects || []).find(x => x.id === selectedObjectId);
+  if (!o) {
+    el.innerHTML = '<span style="color:var(--muted)">Selected object no longer on battlefield.</span>';
+    return;
+  }
+  const rows = [
+    ['Object ID', `#${o.id}`],
+    ['Template', o.template],
+    ['Owner', `${o.owner} (idx ${o.owner_index})`],
+    ['Position', `(${o.x.toFixed(0)}, ${o.y.toFixed(0)})`],
+    ['Health', `${o.health.toFixed(0)} / ${o.max_health.toFixed(0)}`],
+    ['Type', o.commandcenter ? 'Fortress' : (o.structure ? 'Structure' : (o.hero ? 'Hero' : (o.horde ? `Battalion (${o.members_count})` : (o.dozer ? 'Builder' : 'Unit'))))],
+    ['Status', o.attacking ? `⚔️ Attacking #${o.victim_id || o.target_horde_id}` : (o.moving ? `🏃 Moving -> (${o.goal_x.toFixed(0)}, ${o.goal_y.toFixed(0)})` : (o.under_construction ? `🔨 Building (${o.construction_percent.toFixed(0)}%)` : 'Idle / Guarding'))],
+    ['Rank / XP', `Rank ${o.rank} (${o.experience} XP)`]
+  ];
+  el.innerHTML = rows.map(([k, v]) => `<div class="inspector-row"><span style="color:var(--muted)">${k}</span><strong>${v}</strong></div>`).join('');
+}
+
+let lastLogCount = -1;
+function updateLogs(logs) {
+  document.getElementById('logCount').textContent = `${logs.length} events`;
+  if (logs.length === lastLogCount) return;
+  lastLogCount = logs.length;
+  const container = document.getElementById('logContainer');
+  const recent = logs.slice(-80).reverse();
+  container.innerHTML = recent.map(l => {
+    const cls = l.player === p1NameGlobal ? 'p1' : (l.player === p2NameGlobal ? 'p2' : 'sys');
+    return `<div class="log-line ${cls}"><span class="log-frame">[F${l.frame}]</span><strong>${l.agent}:</strong> ${l.text}</div>`;
+  }).join('');
+}
+
+async function sendControl(action, payload = {}) {
+  try {
+    await fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...payload })
+    });
+    await pollState();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+let isPolling = false;
+async function pollState() {
+  if (isPolling) return;
+  isPolling = true;
+  try {
+    if (!terrainCanvas) {
+      const tres = await fetch('/api/terrain');
+      if (tres.ok) {
+        const tjson = await tres.json();
+        if (tjson && tjson.ok && tjson.heights) {
+          terrainData = tjson;
+          buildTerrainCanvas(terrainData);
+          resetCamera();
+        }
+      }
+    }
+    const res = await fetch('/api/state');
+    if (res.ok) {
+      const data = await res.json();
+      updateDashboard(data);
+    }
+  } catch (e) {
+  } finally {
+    isPolling = false;
+  }
+}
+
+resizeCanvas();
+setInterval(pollState, 400);
+pollState();
+</script>
+</body>
+</html>

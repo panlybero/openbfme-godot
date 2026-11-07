@@ -747,6 +747,10 @@ var _cah_real_profile := false   # lane CAH-2 r2: --cah-real-profile (the --cah 
 var _cah_temp_root := ""        # lane CAH-2 r2: the --cah run's temporary user data folder (removed at its end)
 var _rotwk_install := ""        # lane CAH-2: the mounted RotWK install folder (its gi.dat names the user data folder)
 var _cah_hero_id := ""          # lane CAH-1: the unique id of the hero the --cah run saved
+var _agent_port := 0            # external AI / LLM / RL bridge port (--agent or --agent-port=PORT)
+var _agent_bridge: Node = null
+var _arena := false             # 2-agent arena mode (--arena): Slot 1 is a second external human/agent player (state = 6, no built-in Skirmish AI)
+var _p2_faction := "FactionIsengard" # Slot 1 faction in --arena mode (--p2-faction=FactionName)
 
 
 func _ready() -> void:
@@ -1256,6 +1260,25 @@ func _ready() -> void:
 			var spec := arg.substr(11)
 			_net_shot = spec.substr(0, spec.rfind(":"))
 			_net_shot_frame = int(spec.substr(spec.rfind(":") + 1))
+		elif arg == "--agent":
+			_agent_port = 8765
+		elif arg.begins_with("--agent-port="):
+			_agent_port = int(arg.substr(13))
+		elif arg == "--arena":
+			_arena = true
+			if _agent_port <= 0:
+				_agent_port = 8765
+		elif arg.begins_with("--p2-faction="):
+			_p2_faction = arg.substr(13)
+	if _agent_port > 0:
+		var bridge_script: GDScript = load("res://scripts/agent_bridge.gd")
+		if bridge_script != null and bridge_script.can_instantiate():
+			_agent_bridge = bridge_script.new()
+			_agent_bridge.name = "AgentBridge"
+			add_child(_agent_bridge)
+			if not _agent_bridge.setup(self, _agent_port):
+				get_tree().quit(2)
+				return
 	if not _zoom_out_error.is_empty():
 		printerr("GAME FAIL: ", _zoom_out_error)
 		get_tree().quit(2)
@@ -2361,6 +2384,14 @@ func _begin_game(message: Dictionary) -> void:
 		_start_stack = _shell.shell_stack() # lane END-2: the screens the score screen's Continue shows again (TheShell + 0x9C, RW 0x925798)
 	_restart_stack = PackedStringArray()
 	_sync_simulation_profile() # lane UBER-1 (a LAN game keeps its lobby's profile: prepare_new_game names any mismatch)
+	if _arena and message.has("slots"):
+		# 2-agent arena mode: convert AI opponent slots to SLOT_PLAYER (state = 6) so SkirmishAIManager does not attach built-in AI
+		for idx in range(1, message.slots.size()):
+			var sl: Dictionary = message.slots[idx]
+			if int(sl.get("state", 0)) >= 2:
+				sl["state"] = 6
+				sl["name"] = "Agent %d" % (idx + 1)
+				sl["accepted"] = true
 	var prep: Dictionary = _world.prepare_new_game(message)
 	_last_local_slot = int(prep.get("local_slot", -1))
 	if not prep.ok:
@@ -2407,6 +2438,8 @@ func _begin_game(message: Dictionary) -> void:
 		opts["record"] = _last_replay_path() # lane MP-2: every skirmish is recorded
 	if _pingwheel.has("hash"):
 		opts["hash_every_frame"] = true # the ping wheel's check: every logic frame's state hash, compared with a run without pings
+	if _arena and DisplayServer.get_name() == "headless":
+		opts["terrain"] = false
 	var rep: Dictionary = _world.start_new_game(opts)
 	_report = rep
 	print("GAME load: %d ms, ok=%s" % [Time.get_ticks_msec() - started, rep.ok])
@@ -3455,6 +3488,9 @@ func _run_auto() -> void:
 	if _replay_menu_test:
 		await _run_replay_menu_test()
 		return
+	if _agent_bridge != null:
+		print("AGENT BRIDGE READY: game is in PLAYING state at frame %d on 127.0.0.1:%d" % [_world.get_frame(), _agent_port])
+		return
 	_auto_report()
 
 
@@ -3798,7 +3834,10 @@ func _auto_lobby_and_start() -> bool:
 	if not _cah_hero_id.is_empty():
 		slots[0]["hero"] = _cah_hero_id # lane CAH-1: the Hero combo
 	for i in range(1, _opponents + 1):
-		slots.append({"slot": i, "state": _ai})
+		var op_slot := {"slot": i, "state": _ai}
+		if _arena and i == 1 and not _p2_faction.is_empty():
+			op_slot["faction"] = _p2_faction
+		slots.append(op_slot)
 	for i in range(mini(_teams.size(), slots.size())): # lane QA-1: --teams
 		slots[i]["team"] = int(_teams[i])
 	if _play_script == "res://scripts/edainfactions1_player.gd":
