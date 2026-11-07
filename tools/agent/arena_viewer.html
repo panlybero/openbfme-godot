@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>OpenBFME 2D Tactical Arena Monitor</title>
+<title>OpenBFME War Council & 2D Tactical Arena</title>
 <style>
   :root {
     --bg-dark: #0b0f17;
@@ -19,6 +19,7 @@
     --gold: #fbbf24;
     --green: #34d399;
     --red: #ef4444;
+    --purple: #a78bfa;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -33,7 +34,6 @@
     overflow: hidden;
   }
 
-  /* Top Header */
   header {
     background: var(--bg-panel);
     border-bottom: 1px solid var(--border);
@@ -41,7 +41,7 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 12px;
+    padding: 7px 12px;
     gap: 8px;
     flex-shrink: 0;
     z-index: 20;
@@ -52,7 +52,6 @@
     gap: 8px;
     font-weight: 700;
     font-size: 14px;
-    letter-spacing: 0.3px;
     white-space: nowrap;
   }
   .badge {
@@ -67,10 +66,30 @@
   .badge.playing { background: rgba(52, 211, 153, 0.15); color: var(--green); border-color: rgba(52, 211, 153, 0.4); }
   .badge.paused { background: rgba(251, 191, 36, 0.15); color: var(--gold); border-color: rgba(251, 191, 36, 0.4); }
 
+  .role-switcher {
+    display: inline-flex;
+    background: #0d131d;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .role-btn {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 4px 9px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .role-btn.active { background: #1e293b; color: #fff; }
+  .role-btn.p1.active { background: rgba(56, 189, 248, 0.25); color: var(--p1); }
+  .role-btn.p2.active { background: rgba(248, 113, 113, 0.25); color: var(--p2); }
+
   .meta-bar {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 11px;
     font-size: 12px;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
@@ -83,35 +102,36 @@
     align-items: center;
     gap: 5px;
   }
-  button {
+  button, select, input[type="text"] {
     background: var(--bg-card);
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 5px;
-    padding: 5px 8px;
+    padding: 4px 8px;
     font-size: 11.5px;
     font-weight: 600;
-    cursor: pointer;
-    transition: background 0.12s, border-color 0.12s;
+    outline: none;
   }
+  button { cursor: pointer; transition: background 0.12s, border-color 0.12s; }
   button:hover, button:active { background: #243047; border-color: #47597a; }
+  button.primary { background: #2563eb; border-color: #3b82f6; color: #fff; }
+  button.primary:hover { background: #1d4ed8; }
   label.toggle {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 11.5px;
+    font-size: 11px;
     color: var(--muted);
     cursor: pointer;
-    margin-left: 4px;
+    margin-left: 3px;
     user-select: none;
   }
 
-  /* Compact Mobile HUD Strip (always visible on mobile above map) */
   .mobile-score-strip {
     display: none;
     background: #0f1623;
     border-bottom: 1px solid var(--border);
-    padding: 6px 10px;
+    padding: 5px 10px;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
     font-size: 11px;
@@ -132,11 +152,10 @@
   .m-score-metrics { display: flex; gap: 7px; color: var(--muted); }
   .m-score-metrics .gold { color: var(--gold); font-weight: 700; }
 
-  /* Main Layout (3-column on desktop, full-bleed active tab on mobile) */
   main {
     flex: 1;
     display: grid;
-    grid-template-columns: 300px minmax(320px, 1fr) 330px;
+    grid-template-columns: 325px minmax(320px, 1fr) 360px;
     min-height: 0;
     width: 100%;
     position: relative;
@@ -147,8 +166,8 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-    padding: 12px;
-    gap: 12px;
+    padding: 10px;
+    gap: 10px;
     min-height: 0;
   }
   .sidebar.right {
@@ -159,10 +178,10 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 11px;
+    padding: 10px;
     display: flex;
     flex-direction: column;
-    gap: 9px;
+    gap: 8px;
   }
   .player-card.p1 { border-top: 3px solid var(--p1); }
   .player-card.p2 { border-top: 3px solid var(--p2); }
@@ -173,70 +192,104 @@
   }
   .player-title {
     font-weight: 700;
-    font-size: 13.5px;
+    font-size: 13px;
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
   }
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    display: inline-block;
-  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
   .stat-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 6px;
-    font-size: 12px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 5px;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
   }
   .stat-box {
     background: rgba(11, 15, 23, 0.55);
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 5px;
-    padding: 5px 8px;
+    padding: 4px 6px;
   }
-  .stat-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
-  .stat-val { font-size: 13.5px; font-weight: 700; margin-top: 2px; }
+  .stat-label { color: var(--muted); font-size: 9.5px; text-transform: uppercase; }
+  .stat-val { font-size: 12.5px; font-weight: 700; margin-top: 1px; }
   .stat-val.gold { color: var(--gold); }
-  .section-label {
+
+  .doctrine-box {
+    background: rgba(11, 15, 23, 0.5);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 6px;
+    padding: 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .doc-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .doc-row select {
+    flex: 1;
+    padding: 3px 6px;
+    font-size: 11px;
+    background: #111827;
+  }
+  .mission-chip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #131c2e;
+    border-left: 3px solid var(--purple);
+    border-radius: 4px;
+    padding: 4px 6px;
     font-size: 10.5px;
+    gap: 6px;
+  }
+  .mission-chip button {
+    padding: 1px 5px;
+    font-size: 10px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+  }
+  .mission-chip button:hover { color: var(--red); }
+
+  .add-mission-bar {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .add-mission-bar select { flex: 1; padding: 2px 4px; font-size: 10.5px; background: #111827; }
+  .add-mission-bar button { padding: 2px 7px; font-size: 10.5px; }
+
+  .section-label {
+    font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--muted);
-    margin-bottom: 4px;
+    margin-bottom: 3px;
   }
   .queue-list {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    max-height: 120px;
+    gap: 4px;
+    max-height: 85px;
     overflow-y: auto;
   }
   .queue-item {
     background: rgba(11, 15, 23, 0.65);
     border-radius: 4px;
-    padding: 5px 7px;
-    font-size: 11px;
+    padding: 4px 6px;
+    font-size: 10.5px;
   }
-  .queue-top {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 3px;
-  }
-  .progress-track {
-    height: 4px;
-    background: #1e293b;
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%;
-    background: var(--green);
-    transition: width 0.2s;
-  }
+  .queue-top { display: flex; justify-content: space-between; margin-bottom: 2px; }
+  .progress-track { height: 3.5px; background: #1e293b; border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--green); transition: width 0.2s; }
 
   /* Center Map Stage */
   .map-stage {
@@ -288,18 +341,17 @@
     background: rgba(15, 22, 34, 0.88);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 5px 9px;
     display: flex;
     flex-wrap: wrap;
-    gap: 10px 14px;
-    font-size: 10.5px;
+    gap: 8px 12px;
+    font-size: 10px;
     color: var(--muted);
     pointer-events: none;
     max-width: fit-content;
   }
   .legend-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 
-  /* Floating Mini Inspector Toast on Mobile when tapping an object */
   .mobile-inspector-toast {
     display: none;
     position: absolute;
@@ -312,24 +364,69 @@
     padding: 7px 10px;
     font-size: 11px;
     z-index: 12;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
   }
+
+  /* War Council Command Console */
+  .council-card {
+    background: var(--bg-card);
+    border: 1px solid #3b4d6b;
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .council-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .council-input-row {
+    display: flex;
+    gap: 6px;
+  }
+  .council-input-row input {
+    flex: 1;
+    background: #0d131d;
+    padding: 6px 9px;
+    font-size: 12px;
+  }
+  .dispatch-feed {
+    max-height: 155px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 11px;
+  }
+  .dispatch-msg {
+    padding: 5px 7px;
+    border-radius: 5px;
+    background: rgba(11, 15, 23, 0.65);
+    border-left: 3px solid var(--gold);
+    line-height: 1.35;
+  }
+  .dispatch-msg.order { border-left-color: var(--purple); background: rgba(167, 139, 250, 0.1); }
+  .dispatch-msg.error { border-left-color: var(--red); }
 
   .inspector-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 12px;
+    padding: 8px 10px;
+    font-size: 11.5px;
     flex-shrink: 0;
   }
   .inspector-row {
     display: flex;
     justify-content: space-between;
-    padding: 3px 0;
+    padding: 2.5px 0;
     border-bottom: 1px solid rgba(255,255,255,0.04);
   }
   .inspector-row:last-child { border-bottom: none; }
+
   .log-panel {
     flex: 1;
     background: var(--bg-card);
@@ -337,12 +434,12 @@
     border-radius: 8px;
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    min-height: 120px;
   }
   .log-header {
-    padding: 8px 12px;
+    padding: 6px 10px;
     border-bottom: 1px solid var(--border);
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 700;
     text-transform: uppercase;
     color: var(--muted);
@@ -352,16 +449,16 @@
   .log-entries {
     flex: 1;
     overflow-y: auto;
-    padding: 8px 10px;
+    padding: 6px 8px;
     font-family: 'Cascadia Code', 'Consolas', monospace;
-    font-size: 11px;
+    font-size: 10.5px;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 4px;
   }
   .log-line {
-    line-height: 1.35;
-    padding: 4px 6px;
+    line-height: 1.3;
+    padding: 3px 6px;
     border-radius: 4px;
     background: rgba(11, 15, 23, 0.5);
     border-left: 3px solid #475569;
@@ -369,9 +466,8 @@
   .log-line.p1 { border-left-color: var(--p1); }
   .log-line.p2 { border-left-color: var(--p2); }
   .log-line.sys { border-left-color: var(--gold); }
-  .log-frame { color: var(--muted); margin-right: 5px; }
+  .log-frame { color: var(--muted); margin-right: 4px; }
 
-  /* Mobile Bottom Navigation Bar */
   .mobile-tabs {
     display: none;
     height: 48px;
@@ -391,7 +487,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 5px;
     border-top: 2px solid transparent;
   }
   .mobile-tab-btn.active {
@@ -400,97 +496,59 @@
     background: rgba(56, 189, 248, 0.07);
   }
 
-  /* Responsive Mobile / Tablet Layout */
   @media (max-width: 960px) {
-    header {
-      padding: 6px 10px;
-      gap: 6px;
-    }
-    .meta-bar {
-      font-size: 11px;
-      gap: 8px;
-      width: 100%;
-      justify-content: space-between;
-    }
-    .controls {
-      width: 100%;
-      justify-content: space-between;
-      overflow-x: auto;
-      flex-wrap: nowrap;
-      padding-bottom: 2px;
-    }
-    .mobile-score-strip {
-      display: grid;
-    }
-    main {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      min-height: 0;
-    }
-    .map-stage, .sidebar {
-      width: 100%;
-      height: 100%;
-      flex: 1;
-      border: none;
-    }
+    header { padding: 6px 10px; gap: 6px; }
+    .meta-bar { font-size: 11px; gap: 8px; width: 100%; justify-content: space-between; }
+    .controls { width: 100%; justify-content: space-between; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+    .mobile-score-strip { display: grid; }
+    main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .map-stage, .sidebar { width: 100%; height: 100%; flex: 1; border: none; }
     main[data-tab="map"] #playersSidebar,
-    main[data-tab="map"] #logsSidebar {
-      display: none !important;
-    }
+    main[data-tab="map"] #logsSidebar { display: none !important; }
     main[data-tab="players"] #mapSection,
-    main[data-tab="players"] #logsSidebar {
-      display: none !important;
-    }
+    main[data-tab="players"] #logsSidebar { display: none !important; }
     main[data-tab="logs"] #mapSection,
-    main[data-tab="logs"] #playersSidebar {
-      display: none !important;
-    }
-    .mobile-tabs {
-      display: grid;
-    }
-    .legend-bar {
-      font-size: 9.5px;
-      padding: 4px 7px;
-      gap: 6px 10px;
-      bottom: 6px;
-      left: 6px;
-      right: 6px;
-    }
+    main[data-tab="logs"] #playersSidebar { display: none !important; }
+    .mobile-tabs { display: grid; }
   }
 </style>
 </head>
 <body>
   <header>
     <div class="brand">
-      <span>⚔️ OpenBFME Arena</span>
+      <span>⚔️ OpenBFME War Council</span>
       <span id="statusBadge" class="badge playing">CONNECTING</span>
+      <div class="role-switcher" title="Switch Fog-of-War Perspective">
+        <button class="role-btn active" id="roleSpec" onclick="setRole('spectator')">👁️ Spectator</button>
+        <button class="role-btn p1" id="roleP1" onclick="setRole('p1')">🛡️ Cmdr P1</button>
+        <button class="role-btn p2" id="roleP2" onclick="setRole('p2')">🔥 Cmdr P2</button>
+      </div>
     </div>
     <div class="meta-bar">
       <span>Map: <strong id="mapName">-</strong></span>
       <span>F:<strong id="frameVal">0</strong> (<span id="simTime">0:00</span>)</span>
       <span>Spd:<strong id="speedVal">1.0x</strong></span>
-      <span>Obj:<strong id="objCountVal">0</strong></span>
+      <span>Vis Obj:<strong id="objCountVal">0</strong></span>
     </div>
     <div class="controls">
       <button id="btnPause" onclick="sendControl('toggle_pause')">⏸</button>
       <button onclick="sendControl('step', {frames: 15})">+15f</button>
+      <button onclick="sendControl('set_speed', {scale: 0.5})">0.5x</button>
       <button onclick="sendControl('set_speed', {scale: 1.0})">1x</button>
       <button onclick="sendControl('set_speed', {scale: 2.0})">2x</button>
       <button onclick="sendControl('set_speed', {scale: 4.0})">4x</button>
-      <button onclick="sendControl('set_speed', {scale: 8.0})">8x</button>
       <button onclick="resetCamera()">🎯 Fit</button>
       <label class="toggle"><input type="checkbox" id="chkTerrain" checked onchange="renderMap()" /> Map</label>
+      <label class="toggle"><input type="checkbox" id="chkFow" checked onchange="renderMap()" /> FoW/Sectors</label>
       <label class="toggle"><input type="checkbox" id="chkTrails" checked onchange="renderMap()" /> Trails</label>
       <label class="toggle"><input type="checkbox" id="chkVectors" checked onchange="renderMap()" /> Vectors</label>
       <label class="toggle"><input type="checkbox" id="chkLabels" checked onchange="renderMap()" /> Labels</label>
     </div>
   </header>
 
-  <!-- Always-visible compact P1 vs P2 strip on mobile -->
   <div class="mobile-score-strip">
     <div class="m-score-pill p1">
-      <span class="m-score-name" id="mP1Faction">P1 Men</span>
+      <span class="m-score-name" id="mP1Faction">P1</span>
       <div class="m-score-metrics">
         <span class="gold" id="mP1Money">$0</span>
         <span id="mP1Army">0⚔</span>
@@ -498,7 +556,7 @@
       </div>
     </div>
     <div class="m-score-pill p2">
-      <span class="m-score-name" id="mP2Faction">P2 Isengard</span>
+      <span class="m-score-name" id="mP2Faction">P2</span>
       <div class="m-score-metrics">
         <span class="gold" id="mP2Money">$0</span>
         <span id="mP2Army">0⚔</span>
@@ -508,43 +566,151 @@
   </div>
 
   <main id="mainContainer" data-tab="map">
-    <!-- Left Sidebar: Player 1 & Player 2 Scorecards -->
+    <!-- Left Sidebar: Player 1 & Player 2 Scorecards + Doctrine & Missions -->
     <aside class="sidebar" id="playersSidebar">
+      <!-- PLAYER 1 CARD -->
       <div class="player-card p1" id="p1Card">
         <div class="player-header">
-          <div class="player-title"><span class="dot" style="background: var(--p1)"></span> <span id="p1Name">Agent 1 (Player_1)</span></div>
+          <div class="player-title"><span class="dot" style="background: var(--p1)"></span> <span id="p1Name">Commander 1</span></div>
           <span class="badge" id="p1Faction">-</span>
         </div>
         <div class="stat-grid">
           <div class="stat-box"><div class="stat-label">Treasury</div><div class="stat-val gold" id="p1Money">$0</div></div>
           <div class="stat-box"><div class="stat-label">Command Pts</div><div class="stat-val" id="p1CP">0 / 0</div></div>
-          <div class="stat-box"><div class="stat-label">Structures</div><div class="stat-val" id="p1Structs">0</div></div>
-          <div class="stat-box"><div class="stat-label">Army / Hordes</div><div class="stat-val" id="p1Army">0</div></div>
-          <div class="stat-box"><div class="stat-label">Earned / Spent</div><div class="stat-val" id="p1Eco" style="font-size:11px">0 / 0</div></div>
-          <div class="stat-box"><div class="stat-label">Power Pts</div><div class="stat-val" id="p1PP">0</div></div>
+          <div class="stat-box"><div class="stat-label">Army / Bldgs</div><div class="stat-val" id="p1Army">0</div></div>
         </div>
+
+        <div class="doctrine-box" id="p1DoctrineBox">
+          <div class="doc-row">
+            <span style="color:var(--muted)">Strategist:</span>
+            <select id="p1ModeSelect" onchange="updatePlayerMode('p1')">
+              <option value="utility">🤖 Auto (Utility Brain)</option>
+              <option value="llm">🧠 Auto (LLM General)</option>
+              <option value="human">👑 Human-Only (NL/UI)</option>
+            </select>
+          </div>
+          <div class="doc-row">
+            <span style="color:var(--muted)">Archetype:</span>
+            <select id="p1ArchSelect" onchange="updatePlayerArchetype('p1')">
+              <option value="adaptive_tactician">Adaptive Tactician</option>
+              <option value="aggressive_raider">Aggressive Flank Raider</option>
+              <option value="creep_hero_boom">Creep Hunter & Hero Boom</option>
+              <option value="siege_juggernaut">Fortified Siege Juggernaut</option>
+            </select>
+          </div>
+          <div class="doc-row">
+            <span style="color:var(--muted)">Posture:</span>
+            <select id="p1PostureSelect" onchange="updatePlayerPosture('p1')">
+              <option value="balanced">⚖️ Balanced</option>
+              <option value="aggressive">⚔️ Aggressive</option>
+              <option value="defensive">🛡️ Defensive</option>
+              <option value="boom">🌾 Economy / Creep Boom</option>
+            </select>
+          </div>
+          <div>
+            <div class="section-label">Active Missions (<span id="p1MissionCount">0</span>)</div>
+            <div id="p1MissionsList" style="display:flex;flex-direction:column;gap:4px;"></div>
+            <div class="add-mission-bar">
+              <select id="p1AddType">
+                <option value="ATTACK">ATTACK</option>
+                <option value="RAID">RAID</option>
+                <option value="DEFEND">DEFEND</option>
+                <option value="CLEAR_CREEPS">CLEAR_CREEPS</option>
+                <option value="CAPTURE_NEUTRAL">CAPTURE_NEUTRAL</option>
+                <option value="SCOUT">SCOUT</option>
+                <option value="RETREAT_ALL">RETREAT_ALL</option>
+              </select>
+              <select id="p1AddSector">
+                <option value="enemy_base">enemy_base</option>
+                <option value="enemy_expansion">enemy_expansion</option>
+                <option value="north_flank">north_flank</option>
+                <option value="south_flank">south_flank</option>
+                <option value="center">center</option>
+                <option value="forward_staging">forward_staging</option>
+                <option value="home_base">home_base</option>
+                <option value="nearest_creep_lair">nearest_creep_lair</option>
+              </select>
+              <button onclick="addMissionUI('p1')">＋</button>
+            </div>
+          </div>
+        </div>
+
         <div>
-          <div class="section-label">Active Production & Build</div>
-          <div class="queue-list" id="p1Queues"><div style="color:var(--muted);font-size:11px">Idle</div></div>
+          <div class="section-label">Production & Build Queue</div>
+          <div class="queue-list" id="p1Queues"><div style="color:var(--muted);font-size:10.5px">Idle</div></div>
         </div>
       </div>
 
+      <!-- PLAYER 2 CARD -->
       <div class="player-card p2" id="p2Card">
         <div class="player-header">
-          <div class="player-title"><span class="dot" style="background: var(--p2)"></span> <span id="p2Name">Agent 2 (Player_2)</span></div>
+          <div class="player-title"><span class="dot" style="background: var(--p2)"></span> <span id="p2Name">Commander 2</span></div>
           <span class="badge" id="p2Faction">-</span>
         </div>
         <div class="stat-grid">
           <div class="stat-box"><div class="stat-label">Treasury</div><div class="stat-val gold" id="p2Money">$0</div></div>
           <div class="stat-box"><div class="stat-label">Command Pts</div><div class="stat-val" id="p2CP">0 / 0</div></div>
-          <div class="stat-box"><div class="stat-label">Structures</div><div class="stat-val" id="p2Structs">0</div></div>
-          <div class="stat-box"><div class="stat-label">Army / Hordes</div><div class="stat-val" id="p2Army">0</div></div>
-          <div class="stat-box"><div class="stat-label">Earned / Spent</div><div class="stat-val" id="p2Eco" style="font-size:11px">0 / 0</div></div>
-          <div class="stat-box"><div class="stat-label">Power Pts</div><div class="stat-val" id="p2PP">0</div></div>
+          <div class="stat-box"><div class="stat-label">Army / Bldgs</div><div class="stat-val" id="p2Army">0</div></div>
         </div>
+
+        <div class="doctrine-box" id="p2DoctrineBox">
+          <div class="doc-row">
+            <span style="color:var(--muted)">Strategist:</span>
+            <select id="p2ModeSelect" onchange="updatePlayerMode('p2')">
+              <option value="utility">🤖 Auto (Utility Brain)</option>
+              <option value="llm">🧠 Auto (LLM General)</option>
+              <option value="human">👑 Human-Only (NL/UI)</option>
+            </select>
+          </div>
+          <div class="doc-row">
+            <span style="color:var(--muted)">Archetype:</span>
+            <select id="p2ArchSelect" onchange="updatePlayerArchetype('p2')">
+              <option value="adaptive_tactician">Adaptive Tactician</option>
+              <option value="aggressive_raider">Aggressive Flank Raider</option>
+              <option value="creep_hero_boom">Creep Hunter & Hero Boom</option>
+              <option value="siege_juggernaut">Fortified Siege Juggernaut</option>
+            </select>
+          </div>
+          <div class="doc-row">
+            <span style="color:var(--muted)">Posture:</span>
+            <select id="p2PostureSelect" onchange="updatePlayerPosture('p2')">
+              <option value="balanced">⚖️ Balanced</option>
+              <option value="aggressive">⚔️ Aggressive</option>
+              <option value="defensive">🛡️ Defensive</option>
+              <option value="boom">🌾 Economy / Creep Boom</option>
+            </select>
+          </div>
+          <div>
+            <div class="section-label">Active Missions (<span id="p2MissionCount">0</span>)</div>
+            <div id="p2MissionsList" style="display:flex;flex-direction:column;gap:4px;"></div>
+            <div class="add-mission-bar">
+              <select id="p2AddType">
+                <option value="ATTACK">ATTACK</option>
+                <option value="RAID">RAID</option>
+                <option value="DEFEND">DEFEND</option>
+                <option value="CLEAR_CREEPS">CLEAR_CREEPS</option>
+                <option value="CAPTURE_NEUTRAL">CAPTURE_NEUTRAL</option>
+                <option value="SCOUT">SCOUT</option>
+                <option value="RETREAT_ALL">RETREAT_ALL</option>
+              </select>
+              <select id="p2AddSector">
+                <option value="enemy_base">enemy_base</option>
+                <option value="enemy_expansion">enemy_expansion</option>
+                <option value="north_flank">north_flank</option>
+                <option value="south_flank">south_flank</option>
+                <option value="center">center</option>
+                <option value="forward_staging">forward_staging</option>
+                <option value="home_base">home_base</option>
+                <option value="nearest_creep_lair">nearest_creep_lair</option>
+              </select>
+              <button onclick="addMissionUI('p2')">＋</button>
+            </div>
+          </div>
+        </div>
+
         <div>
-          <div class="section-label">Active Production & Build</div>
-          <div class="queue-list" id="p2Queues"><div style="color:var(--muted);font-size:11px">Idle</div></div>
+          <div class="section-label">Production & Build Queue</div>
+          <div class="queue-list" id="p2Queues"><div style="color:var(--muted);font-size:10.5px">Idle</div></div>
         </div>
       </div>
     </aside>
@@ -566,24 +732,51 @@
         <div class="legend-item">⚔️ Barracks</div>
         <div class="legend-item">🛡️ Battalion + Soldiers</div>
         <div class="legend-item">⭐ Hero</div>
-        <div class="legend-item">🏕️ Creep/Neutral</div>
+        <div class="legend-item">👻 Memory Ghost</div>
         <div class="legend-item"><span style="color:#38bdf8">━━▸</span> Trail & Move</div>
         <div class="legend-item"><span style="color:#ef4444">━━▸</span> Attack</div>
       </div>
     </section>
 
-    <!-- Right Sidebar: Object Inspector + Live Agent Action Log -->
+    <!-- Right Sidebar: War Council Natural-Language Console + Object Inspector + Tick Log -->
     <aside class="sidebar right" id="logsSidebar">
+      <div class="council-card">
+        <div class="council-top">
+          <span class="section-label" style="margin:0;color:#fbbf24">👑 War Council Natural-Language Orders</span>
+          <select id="llmProviderSelect" onchange="changeLLMProvider()" title="Server-Side LLM Provider">
+            <option value="litellm:smart-mini">LiteLLM: smart-mini (Gemma4)</option>
+            <option value="litellm:smart">LiteLLM: smart (Qwen3.8 27B)</option>
+            <option value="gemini:gemini-2.5-flash">Gemini: 2.5 Flash</option>
+            <option value="gemini:gemini-2.5-pro">Gemini: 2.5 Pro</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;font-size:11px;">
+          <span style="color:var(--muted)">Issue order to:</span>
+          <select id="orderSlotSelect" style="flex:1">
+            <option value="p1">🛡️ Commander P1</option>
+            <option value="p2">🔥 Commander P2</option>
+          </select>
+          <button onclick="triggerAutoLLMReview()" title="Ask General to review battlefield & update Doctrine">🧠 Ask General</button>
+        </div>
+        <div class="council-input-row">
+          <input type="text" id="nlOrderInput" placeholder="e.g. Raid north farms with cavalry, hold center with pikes..." onkeydown="if(event.key==='Enter') sendNLOrder()" />
+          <button class="primary" id="btnSendOrder" onclick="sendNLOrder()">Send</button>
+        </div>
+        <div class="dispatch-feed" id="dispatchFeed">
+          <div style="color:var(--muted);font-size:11px">Issue a natural-language directive above or click "🧠 Ask General" for an autonomous strategic review.</div>
+        </div>
+      </div>
+
       <div class="inspector-card">
         <div class="section-label">Selected Unit / Structure Inspector</div>
-        <div id="inspectorBody" style="color: var(--muted); font-size: 11.5px; padding-top: 4px;">
-          Tap or click any unit, battalion, or building on the 2D tactical map to inspect its live engine state.
+        <div id="inspectorBody" style="color: var(--muted); font-size: 11px; padding-top: 2px;">
+          Tap or click any unit, battalion, or building on the 2D map to inspect its live state.
         </div>
       </div>
 
       <div class="log-panel">
         <div class="log-header">
-          <span>Live Agent Decisions & Orders</span>
+          <span>Sub-Commander Tick Execution Log</span>
           <span id="logCount">0 events</span>
         </div>
         <div class="log-entries" id="logContainer"></div>
@@ -593,8 +786,8 @@
 
   <nav class="mobile-tabs">
     <button class="mobile-tab-btn active" id="tabBtnMap" onclick="switchMobileTab('map')">🗺️ Tactical Map</button>
-    <button class="mobile-tab-btn" id="tabBtnPlayers" onclick="switchMobileTab('players')">⚔️ Armies & Eco</button>
-    <button class="mobile-tab-btn" id="tabBtnLogs" onclick="switchMobileTab('logs')">📜 Action Feed</button>
+    <button class="mobile-tab-btn" id="tabBtnPlayers" onclick="switchMobileTab('players')">⚔️ Doctrine & Eco</button>
+    <button class="mobile-tab-btn" id="tabBtnLogs" onclick="switchMobileTab('logs')">👑 War Council</button>
   </nav>
 
 <script>
@@ -602,7 +795,9 @@ const canvas = document.getElementById('tacticalCanvas');
 const ctx = canvas.getContext('2d');
 const mapSection = document.getElementById('mapSection');
 
+let currentRole = new URLSearchParams(window.location.search).get('role') || 'spectator';
 let latestState = null;
+let latestData = null;
 let terrainData = null;
 let terrainCanvas = null;
 let p1NameGlobal = 'Player_1';
@@ -610,11 +805,9 @@ let p2NameGlobal = 'Player_2';
 let selectedObjectId = null;
 let hoveredObjectId = null;
 
-// Per-unit breadcrumb trail history: Map<id, Array<{x, y, frame}>>
 const trailHistory = new Map();
 const MAX_TRAIL_POINTS = 24;
 
-// Camera transform (world -> canvas)
 let cam = {
   zoom: 0.1,
   panX: 0.0,
@@ -624,6 +817,17 @@ let cam = {
   dragStartX: 0,
   dragStartY: 0
 };
+
+function setRole(role) {
+  currentRole = role;
+  document.getElementById('roleSpec').classList.toggle('active', role === 'spectator');
+  document.getElementById('roleP1').classList.toggle('active', role === 'p1');
+  document.getElementById('roleP2').classList.toggle('active', role === 'p2');
+  if (role === 'p1' || role === 'p2') {
+    document.getElementById('orderSlotSelect').value = role;
+  }
+  pollState();
+}
 
 function switchMobileTab(tab) {
   document.getElementById('mainContainer').setAttribute('data-tab', tab);
@@ -683,28 +887,19 @@ function buildTerrainCanvas(td) {
       const slope = ((hR - h) - (hU - h)) / Math.max(8, (maxZ - minZ) * 0.14);
       const shade = Math.max(0.68, Math.min(1.35, 1.0 - slope * 0.45));
 
-      // High-contrast topographic relief palette (deep river basin -> lush valley -> highland -> mountain peak)
       let r, g, b;
       if (norm < 0.14) {
         const t = norm / 0.14;
-        r = 16 + t * 14;
-        g = 38 + t * 22;
-        b = 58 - t * 12;
+        r = 16 + t * 14; g = 38 + t * 22; b = 58 - t * 12;
       } else if (norm < 0.55) {
         const t = (norm - 0.14) / 0.41;
-        r = 30 + t * 24;
-        g = 60 + t * 26;
-        b = 46 - t * 8;
+        r = 30 + t * 24; g = 60 + t * 26; b = 46 - t * 8;
       } else if (norm < 0.82) {
         const t = (norm - 0.55) / 0.27;
-        r = 54 + t * 32;
-        g = 86 + t * 12;
-        b = 38 + t * 14;
+        r = 54 + t * 32; g = 86 + t * 12; b = 38 + t * 14;
       } else {
         const t = (norm - 0.82) / 0.18;
-        r = 86 + t * 36;
-        g = 98 + t * 28;
-        b = 52 + t * 32;
+        r = 86 + t * 36; g = 98 + t * 28; b = 52 + t * 32;
       }
 
       const hRight = sampleH(gx + 0.9 * (cols / texW), gy);
@@ -728,7 +923,6 @@ function buildTerrainCanvas(td) {
   }
   octx.putImageData(img, 0, 0);
 
-  // Draw forest / tree canopy dots onto cached terrain bitmap
   const trees = td.trees || [];
   const spanX = Math.max(1, (td.max_x - td.min_x));
   const spanY = Math.max(1, (td.max_y - td.min_y));
@@ -826,20 +1020,13 @@ function getEffectiveBounds(st) {
 }
 
 function worldToScreen(wx, wy) {
-  return {
-    x: cam.panX + wx * cam.zoom,
-    y: cam.panY - wy * cam.zoom
-  };
+  return { x: cam.panX + wx * cam.zoom, y: cam.panY - wy * cam.zoom };
 }
 
 function screenToWorld(sx, sy) {
-  return {
-    x: (sx - cam.panX) / cam.zoom,
-    y: (cam.panY - sy) / cam.zoom
-  };
+  return { x: (sx - cam.panX) / cam.zoom, y: (cam.panY - sy) / cam.zoom };
 }
 
-// Mouse Pan & Zoom
 canvas.addEventListener('mousedown', (e) => {
   cam.dragging = true;
   cam.dragStartX = e.clientX;
@@ -851,12 +1038,10 @@ window.addEventListener('mousemove', (e) => {
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
   if (cam.dragging) {
-    const dx = e.clientX - cam.dragStartX;
-    const dy = e.clientY - cam.dragStartY;
+    cam.panX += e.clientX - cam.dragStartX;
+    cam.panY += e.clientY - cam.dragStartY;
     cam.dragStartX = e.clientX;
     cam.dragStartY = e.clientY;
-    cam.panX += dx;
-    cam.panY += dy;
     renderMap();
     return;
   }
@@ -897,15 +1082,7 @@ canvas.addEventListener('wheel', (e) => {
   renderMap();
 }, { passive: false });
 
-// Mobile Touch Pan, Pinch-to-Zoom & Tap Selection
-let touchState = {
-  mode: 'none',
-  startX: 0,
-  startY: 0,
-  lastX: 0,
-  lastY: 0,
-  pinchDist: 0
-};
+let touchState = { mode: 'none', startX: 0, startY: 0, lastX: 0, lastY: 0, pinchDist: 0 };
 
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
@@ -961,9 +1138,10 @@ canvas.addEventListener('touchend', (e) => {
     );
     if (moved < 12) {
       const rect = canvas.getBoundingClientRect();
-      const mx = e.changedTouches[0].clientX - rect.left;
-      const my = e.changedTouches[0].clientY - rect.top;
-      selectObjectAtScreen(mx, my);
+      selectObjectAtScreen(
+        e.changedTouches[0].clientX - rect.left,
+        e.changedTouches[0].clientY - rect.top
+      );
     }
   }
   if (e.touches.length === 0) touchState.mode = 'none';
@@ -976,7 +1154,7 @@ function selectObjectAtScreen(mx, my) {
   const toast = document.getElementById('mobileToast');
   if (hit && window.innerWidth <= 960) {
     toast.style.display = 'block';
-    toast.innerHTML = `<strong>${shortName(hit.template)} #${hit.id}</strong> (${hit.owner}) — HP ${Math.round(hit.health)}/${Math.round(hit.max_health)} ${hit.attacking ? '⚔️ Attacking' : (hit.moving ? '🏃 Moving' : '')}`;
+    toast.innerHTML = `<strong>${shortName(hit.template)} #${hit.id}</strong> (${hit.owner}${hit.ghost ? ' 👻 Memory' : ''}) — HP ${Math.round(hit.health)}/${Math.round(hit.max_health)}`;
   } else if (toast) {
     toast.style.display = 'none';
   }
@@ -1018,6 +1196,7 @@ function updateTrailHistory(st) {
   const frame = st.frame || 0;
   const aliveIds = new Set();
   for (const o of st.objects) {
+    if (o.ghost) continue;
     aliveIds.add(o.id);
     if (o.structure) continue;
     let hist = trailHistory.get(o.id);
@@ -1064,12 +1243,13 @@ function renderMap() {
   const objById = new Map();
   for (const o of objs) objById.set(o.id, o);
 
-  const showTerrain = document.getElementById('chkTerrain') ? document.getElementById('chkTerrain').checked : true;
-  const showTrails = document.getElementById('chkTrails') ? document.getElementById('chkTrails').checked : true;
+  const showTerrain = document.getElementById('chkTerrain').checked;
+  const showFow = document.getElementById('chkFow').checked;
+  const showTrails = document.getElementById('chkTrails').checked;
   const showVectors = document.getElementById('chkVectors').checked;
   const showLabels = document.getElementById('chkLabels').checked;
 
-  // 0. Pre-rendered Topographic Relief, Contours & Forest Canopy
+  // 0. Topographic Relief, Contours & Forest Canopy
   const ext = getEffectiveBounds(latestState);
   if (showTerrain && terrainCanvas && terrainData) {
     const topLeft = worldToScreen(terrainData.min_x, terrainData.max_y);
@@ -1080,8 +1260,8 @@ function renderMap() {
     ctx.strokeRect(topLeft.x, topLeft.y, botRight.x - topLeft.x, botRight.y - topLeft.y);
   }
 
-  // 1. Tactical Grid
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+  // 1. Tactical Grid & Named Sector Callouts
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.07)';
   ctx.lineWidth = 1;
   const step = 500;
   const startGX = Math.floor(ext.minX / step) * step;
@@ -1092,18 +1272,49 @@ function renderMap() {
   for (let gx = startGX; gx <= endGX; gx += step) {
     const p0 = worldToScreen(gx, startGY);
     const p1 = worldToScreen(gx, endGY);
-    ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.lineTo(p1.x, p1.y);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.stroke();
   }
   for (let gy = startGY; gy <= endGY; gy += step) {
     const p0 = worldToScreen(startGX, gy);
     const p1 = worldToScreen(endGX, gy);
-    ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.lineTo(p1.x, p1.y);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.stroke();
+  }
+
+  // Draw Fog-of-War Vision Rings (when viewing as Commander P1 or P2) & Named Tactical Sectors
+  if (showFow) {
+    if (latestState.vision_circles && latestState.vision_circles.length > 0) {
+      ctx.save();
+      ctx.strokeStyle = currentRole === 'p2' ? 'rgba(248, 113, 113, 0.16)' : 'rgba(56, 189, 248, 0.16)';
+      ctx.lineWidth = 1;
+      for (const [vx, vy, vr] of latestState.vision_circles) {
+        const vp = worldToScreen(vx, vy);
+        ctx.beginPath();
+        ctx.arc(vp.x, vp.y, vr * cam.zoom, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    const activeInfo = (currentRole === 'p2' ? (latestData && latestData.agent2_info) : (latestData && latestData.agent1_info));
+    const sectors = activeInfo && activeInfo.sectors;
+    if (sectors) {
+      ctx.save();
+      ctx.font = 'bold 9.5px monospace';
+      ctx.textAlign = 'center';
+      for (const [sname, coords] of Object.entries(sectors)) {
+        if (sname === 'home_base' || sname === 'enemy_base' || sname === 'enemy_expansion') continue;
+        const sp = worldToScreen(coords[0], coords[1]);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
+        const lbl = sname.toUpperCase().replace('_', ' ');
+        const tw = ctx.measureText(lbl).width + 8;
+        ctx.fillRect(sp.x - tw * 0.5, sp.y - 7, tw, 14);
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
+        ctx.strokeRect(sp.x - tw * 0.5, sp.y - 7, tw, 14);
+        ctx.fillStyle = 'rgba(203, 213, 225, 0.75)';
+        ctx.fillText(lbl, sp.x, sp.y + 3);
+      }
+      ctx.restore();
+    }
   }
 
   // 2. Base Influence Halos around CommandCenters
@@ -1126,10 +1337,10 @@ function renderMap() {
     }
   }
 
-  // 2.5. Troop Breadcrumb Movement Trails (Past Path Ribbons)
+  // 2.5. Troop Breadcrumb Movement Trails
   if (showTrails) {
     for (const o of objs) {
-      if (o.structure) continue;
+      if (o.structure || o.ghost) continue;
       const hist = trailHistory.get(o.id);
       if (!hist || hist.length < 2) continue;
       const isP1 = o.owner === p1NameGlobal;
@@ -1153,6 +1364,7 @@ function renderMap() {
   // 3. Movement, Rally, Builder, and Attack Vectors
   if (showVectors) {
     for (const o of objs) {
+      if (o.ghost) continue;
       const p = worldToScreen(o.x, o.y);
 
       if (o.structure && o.rally_x !== undefined && o.rally_y !== undefined) {
@@ -1160,10 +1372,7 @@ function renderMap() {
         ctx.strokeStyle = 'rgba(52, 211, 153, 0.4)';
         ctx.setLineDash([2, 4]);
         ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(rp.x, rp.y);
-        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(rp.x, rp.y); ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = 'rgba(52, 211, 153, 0.85)';
         ctx.font = '10px sans-serif';
@@ -1176,10 +1385,7 @@ function renderMap() {
         const tp = worldToScreen(tgt.x, tgt.y);
         ctx.strokeStyle = 'rgba(239, 68, 68, 0.9)';
         ctx.lineWidth = 2.0;
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(tp.x, tp.y);
-        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tp.x, tp.y); ctx.stroke();
         drawArrowhead(ctx, p.x, p.y, (p.x + tp.x) * 0.5, (p.y + tp.y) * 0.5, 4.8, 'rgba(239, 68, 68, 0.98)');
       } else if (o.dozer && o.dozer_target_id > 0 && objById.has(o.dozer_target_id)) {
         const tgt = objById.get(o.dozer_target_id);
@@ -1187,10 +1393,7 @@ function renderMap() {
         ctx.strokeStyle = 'rgba(251, 191, 36, 0.75)';
         ctx.setLineDash([3, 3]);
         ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(tp.x, tp.y);
-        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tp.x, tp.y); ctx.stroke();
         ctx.setLineDash([]);
       } else if (o.moving && (Math.abs(o.goal_x) > 1 || Math.abs(o.goal_y) > 1)) {
         const gp = worldToScreen(o.goal_x, o.goal_y);
@@ -1198,10 +1401,7 @@ function renderMap() {
         ctx.strokeStyle = moveCol;
         ctx.setLineDash([5, 4]);
         ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(gp.x, gp.y);
-        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(gp.x, gp.y); ctx.stroke();
         ctx.setLineDash([]);
         if (Math.hypot(gp.x - p.x, gp.y - p.y) > 18) {
           drawArrowhead(ctx, p.x, p.y, gp.x, gp.y, 4.5, moveCol);
@@ -1214,14 +1414,10 @@ function renderMap() {
   const structures = objs.filter(o => o.structure);
   const units = objs.filter(o => !o.structure);
 
-  for (const o of structures) {
-    drawStructure(o, showLabels);
-  }
-  for (const o of units) {
-    drawUnit(o, showLabels);
-  }
+  for (const o of structures) drawStructure(o, showLabels);
+  for (const o of units) drawUnit(o, showLabels);
 
-  // 5. Projectiles in flight with velocity streaks
+  // 5. Projectiles in flight
   const projs = latestState.projectiles || [];
   for (const pr of projs) {
     const p = worldToScreen(pr.x, pr.y);
@@ -1229,10 +1425,7 @@ function renderMap() {
       const pp = worldToScreen(pr.prev_x, pr.prev_y);
       ctx.strokeStyle = 'rgba(253, 224, 71, 0.75)';
       ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      ctx.moveTo(pp.x, pp.y);
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(pp.x, pp.y); ctx.lineTo(p.x, p.y); ctx.stroke();
     }
     ctx.fillStyle = '#fde047';
     ctx.beginPath();
@@ -1251,13 +1444,12 @@ function drawStructure(o, showLabels) {
   let size = o.commandcenter ? 15 : (o.fs_factory ? 12 : (isPlayable ? 9.5 : 7.5));
   ctx.save();
   ctx.translate(p.x, p.y);
+  if (o.ghost) ctx.globalAlpha = 0.48;
 
   if (isSelected || isHovered) {
     ctx.strokeStyle = isSelected ? '#fbbf24' : '#ffffff';
     ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, 0, size + 6, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, size + 6, 0, Math.PI * 2); ctx.stroke();
   }
 
   if (o.commandcenter) {
@@ -1277,11 +1469,13 @@ function drawStructure(o, showLabels) {
   } else {
     ctx.fillStyle = o.under_construction ? 'rgba(15, 23, 42, 0.5)' : '#0f172a';
     ctx.strokeStyle = col;
+    if (o.ghost) ctx.setLineDash([3, 3]);
     ctx.lineWidth = o.fs_factory ? 2.2 : 1.5;
     ctx.beginPath();
     ctx.rect(-size, -size, size * 2, size * 2);
     ctx.fill();
     ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   ctx.fillStyle = col;
@@ -1317,7 +1511,8 @@ function drawStructure(o, showLabels) {
     ctx.font = '9.5px sans-serif';
     ctx.textAlign = 'center';
     let label = shortName(o.template);
-    if (o.under_construction) label += ` (${Math.round(o.construction_percent)}%)`;
+    if (o.ghost) label += ' (👻)';
+    else if (o.under_construction) label += ` (${Math.round(o.construction_percent)}%)`;
     ctx.fillText(label, 0, size + 10);
   }
 
@@ -1347,35 +1542,29 @@ function drawUnit(o, showLabels) {
     ctx.restore();
   }
 
-  let r = o.hero ? 9 : (o.horde ? 8.5 : (o.dozer ? 5.5 : 5.5));
+  let r = o.hero ? 9 : (o.horde ? 8.5 : 5.5);
   ctx.save();
   ctx.translate(p.x, p.y);
 
   if ((o.horde || o.hero) && o.angle !== undefined) {
     const screenAngle = -o.angle;
     const noseDist = o.horde ? 13 : 11;
-    const nx = Math.cos(screenAngle) * noseDist;
-    const ny = Math.sin(screenAngle) * noseDist;
     ctx.fillStyle = col;
     ctx.beginPath();
-    ctx.arc(nx, ny, 2.2, 0, Math.PI * 2);
+    ctx.arc(Math.cos(screenAngle) * noseDist, Math.sin(screenAngle) * noseDist, 2.2, 0, Math.PI * 2);
     ctx.fill();
   }
 
   if (isSelected || isHovered) {
     ctx.strokeStyle = isSelected ? '#fbbf24' : '#ffffff';
     ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, 0, r + 5, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, r + 5, 0, Math.PI * 2); ctx.stroke();
   }
 
   if (o.attacking) {
     ctx.strokeStyle = 'rgba(239, 68, 68, 0.92)';
     ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, r + 4, 0, Math.PI * 2); ctx.stroke();
   }
 
   if (o.horde) {
@@ -1396,10 +1585,7 @@ function drawUnit(o, showLabels) {
     ctx.fillStyle = '#fbbf24';
     ctx.strokeStyle = col;
     ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 
     ctx.fillStyle = '#0b0f17';
     ctx.font = 'bold 9px sans-serif';
@@ -1410,10 +1596,7 @@ function drawUnit(o, showLabels) {
     ctx.fillStyle = o.dozer ? '#e2e8f0' : col;
     ctx.strokeStyle = col;
     ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
 
   if (o.max_health > 0 && (isPlayable || o.health < o.max_health)) {
@@ -1438,11 +1621,10 @@ function drawUnit(o, showLabels) {
 }
 
 function updateDashboard(data) {
+  latestData = data;
   latestState = data.state;
   if (!latestState) return;
-  if (!cam.initialized || cam.zoom <= 0.01) {
-    resizeCanvas();
-  }
+  if (!cam.initialized || cam.zoom <= 0.01) resizeCanvas();
 
   const st = latestState;
   const badge = document.getElementById('statusBadge');
@@ -1451,13 +1633,10 @@ function updateDashboard(data) {
   document.getElementById('btnPause').textContent = st.paused ? '▶' : '⏸';
 
   const mapRaw = st.map || '-';
-  const mapShort = mapRaw.split('/').pop().replace('.map', '');
-  document.getElementById('mapName').textContent = mapShort;
+  document.getElementById('mapName').textContent = mapRaw.split('/').pop().replace('.map', '');
   document.getElementById('frameVal').textContent = st.frame || 0;
   const totalSec = Math.floor((st.frame || 0) / 5);
-  const mins = Math.floor(totalSec / 60);
-  const secs = totalSec % 60;
-  document.getElementById('simTime').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+  document.getElementById('simTime').textContent = `${Math.floor(totalSec / 60)}:${(totalSec % 60).toString().padStart(2, '0')}`;
   document.getElementById('speedVal').textContent = `${(st.time_scale || 1).toFixed(1)}x`;
   document.getElementById('objCountVal').textContent = (st.objects || []).length;
 
@@ -1465,10 +1644,21 @@ function updateDashboard(data) {
   p1NameGlobal = (data.agent1_info && data.agent1_info.player_name) || (playable[0] && playable[0].name) || 'Player_1';
   p2NameGlobal = (data.agent2_info && data.agent2_info.player_name) || (playable[1] && playable[1].name) || 'Player_2';
 
+  if (data.llm_status) {
+    const curVal = `${data.llm_status.active_provider}:${data.llm_status.active_model}`;
+    const sel = document.getElementById('llmProviderSelect');
+    if (document.activeElement !== sel) {
+      for (const opt of sel.options) {
+        if (opt.value === curVal) { sel.value = curVal; break; }
+      }
+    }
+  }
+
   updateTrailHistory(st);
   updatePlayerCard('p1', 'mP1', p1NameGlobal, st, data.agent1_info);
   updatePlayerCard('p2', 'mP2', p2NameGlobal, st, data.agent2_info);
   updateInspector();
+  updateDispatches(data.dispatches || []);
   updateLogs(data.logs || []);
   renderMap();
 }
@@ -1476,7 +1666,7 @@ function updateDashboard(data) {
 function updatePlayerCard(prefix, mobilePrefix, playerName, st, agentInfo) {
   const players = st.players || [];
   const p = players.find(x => x.name === playerName) || {};
-  const objs = (st.objects || []).filter(o => o.owner === playerName);
+  const objs = (st.objects || []).filter(o => o.owner === playerName && !o.ghost);
   const structs = objs.filter(o => o.structure);
   const hordes = objs.filter(o => o.horde);
   const heroes = objs.filter(o => o.hero && !o.structure);
@@ -1488,44 +1678,60 @@ function updatePlayerCard(prefix, mobilePrefix, playerName, st, agentInfo) {
     if (m) faction = m[1];
   }
 
-  document.getElementById(`${prefix}Name`).textContent = (agentInfo && agentInfo.label) || `${playerName}`;
+  const busyTag = (agentInfo && agentInfo.llm_busy) ? ' ⏳' : '';
+  document.getElementById(`${prefix}Name`).textContent = ((agentInfo && agentInfo.label) || playerName) + busyTag;
   document.getElementById(`${prefix}Faction`).textContent = faction || 'Active';
-  document.getElementById(`${prefix}Money`).textContent = `$${p.money ?? 0}`;
+  document.getElementById(`${prefix}Money`).textContent = p.redacted ? ' Fog ' : `$${p.money ?? 0}`;
   document.getElementById(`${prefix}CP`).textContent = `${p.cp_used ?? p.command_points_used ?? 0} / ${p.cp_limit ?? p.command_points_limit ?? 0}`;
-  document.getElementById(`${prefix}Structs`).textContent = `${structs.length}`;
-  document.getElementById(`${prefix}Army`).textContent = `${hordes.length} (${soldiers}⚔` + (heroes.length ? ` +${heroes.length}★)` : ')');
-  document.getElementById(`${prefix}Eco`).textContent = `$${p.earned ?? 0} / $${p.spent ?? 0}`;
-  document.getElementById(`${prefix}PP`).textContent = `${p.power_points ?? 0}`;
+  document.getElementById(`${prefix}Army`).textContent = `${hordes.length}⚔ (${soldiers}) | ${structs.length}🏰`;
 
-  // Mobile strip update
   const mFac = document.getElementById(`${mobilePrefix}Faction`);
   if (mFac) {
     mFac.textContent = `${prefix.toUpperCase()} ${faction || ''}`;
-    document.getElementById(`${mobilePrefix}Money`).textContent = `$${p.money ?? 0}`;
+    document.getElementById(`${mobilePrefix}Money`).textContent = p.redacted ? 'Fog' : `$${p.money ?? 0}`;
     document.getElementById(`${mobilePrefix}Army`).textContent = `${soldiers}⚔` + (heroes.length ? `+${heroes.length}★` : '');
     document.getElementById(`${mobilePrefix}Structs`).textContent = `${structs.length}🏰`;
+  }
+
+  // Update Doctrine & Missions UI
+  const docBox = document.getElementById(`${prefix}DoctrineBox`);
+  if (agentInfo && agentInfo.doctrine) {
+    docBox.style.display = 'flex';
+    const doc = agentInfo.doctrine;
+    const modeSel = document.getElementById(`${prefix}ModeSelect`);
+    if (document.activeElement !== modeSel) modeSel.value = agentInfo.strategist_mode || 'utility';
+    const archSel = document.getElementById(`${prefix}ArchSelect`);
+    if (document.activeElement !== archSel) archSel.value = doc.archetype || 'adaptive_tactician';
+    const posSel = document.getElementById(`${prefix}PostureSelect`);
+    if (document.activeElement !== posSel) posSel.value = doc.posture || 'balanced';
+
+    const missions = doc.missions || [];
+    document.getElementById(`${prefix}MissionCount`).textContent = missions.length;
+    const mList = document.getElementById(`${prefix}MissionsList`);
+    mList.innerHTML = missions.map(m => `
+      <div class="mission-chip">
+        <span><strong>${m.type}</strong> → ${m.sector}${m.via_sector ? ` (via ${m.via_sector})` : ''}</span>
+        <button onclick="removeMissionUI('${prefix}', '${m.id}')" title="Cancel Mission">✕</button>
+      </div>
+    `).join('');
+  } else {
+    docBox.style.display = 'none';
   }
 
   const qEl = document.getElementById(`${prefix}Queues`);
   const items = [];
   for (const s of structs) {
     if (s.under_construction) {
-      items.push({
-        label: `🔨 ${shortName(s.template)}`,
-        pct: Math.round(s.construction_percent || 0)
-      });
+      items.push({ label: `🔨 ${shortName(s.template)}`, pct: Math.round(s.construction_percent || 0) });
     }
     if (s.production_queue && s.production_queue.length > 0) {
       for (const q of s.production_queue) {
-        items.push({
-          label: `⚔️ ${shortName(q.template || q.upgrade || 'Item')}`,
-          pct: Math.round(q.percent || 0)
-        });
+        items.push({ label: `⚔️ ${shortName(q.template || q.upgrade || 'Item')}`, pct: Math.round(q.percent || 0) });
       }
     }
   }
   if (items.length === 0) {
-    qEl.innerHTML = '<div style="color:var(--muted);font-size:11px">No active builds</div>';
+    qEl.innerHTML = '<div style="color:var(--muted);font-size:10.5px">No active builds</div>';
   } else {
     qEl.innerHTML = items.map(it => `
       <div class="queue-item">
@@ -1536,22 +1742,98 @@ function updatePlayerCard(prefix, mobilePrefix, playerName, st, agentInfo) {
   }
 }
 
+async function updatePlayerMode(slot) {
+  const mode = document.getElementById(`${slot}ModeSelect`).value;
+  await postJSON('/api/doctrine', { slot, strategist_mode: mode, trigger_llm_review: mode === 'llm' });
+}
+
+async function updatePlayerArchetype(slot) {
+  const archetype = document.getElementById(`${slot}ArchSelect`).value;
+  await postJSON('/api/doctrine', { slot, archetype, reset_preset: true });
+}
+
+async function updatePlayerPosture(slot) {
+  const posture = document.getElementById(`${slot}PostureSelect`).value;
+  await postJSON('/api/doctrine', { slot, doctrine: { posture } });
+}
+
+async function addMissionUI(slot) {
+  const type = document.getElementById(`${slot}AddType`).value;
+  const sector = document.getElementById(`${slot}AddSector`).value;
+  await postJSON('/api/doctrine', {
+    slot,
+    add_mission: { type, sector, squad_filter: 'any', min_squads: 1, note: `${type} -> ${sector}` }
+  });
+}
+
+async function removeMissionUI(slot, missionId) {
+  await postJSON('/api/doctrine', { slot, remove_mission_id: missionId });
+}
+
+async function changeLLMProvider() {
+  const val = document.getElementById('llmProviderSelect').value;
+  const [provider, model] = val.split(':');
+  await postJSON('/api/llm_config', { provider, model });
+}
+
+async function sendNLOrder() {
+  const input = document.getElementById('nlOrderInput');
+  const order = input.value.trim();
+  if (!order) return;
+  const slot = document.getElementById('orderSlotSelect').value;
+  input.value = '';
+  await postJSON('/api/order', { slot, order });
+}
+
+async function triggerAutoLLMReview() {
+  const slot = document.getElementById('orderSlotSelect').value;
+  await postJSON('/api/doctrine', { slot, trigger_llm_review: true });
+}
+
+async function postJSON(url, payload) {
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    await pollState();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+let lastDispatchCount = -1;
+function updateDispatches(dispatches) {
+  if (dispatches.length === lastDispatchCount) return;
+  lastDispatchCount = dispatches.length;
+  const el = document.getElementById('dispatchFeed');
+  if (dispatches.length === 0) return;
+  const recent = dispatches.slice(-40).reverse();
+  el.innerHTML = recent.map(d => `
+    <div class="dispatch-msg ${d.kind || 'general'}">
+      <div style="font-size:10px;color:var(--muted)">[F${d.frame}] <strong>${d.sender}</strong></div>
+      <div>${d.text}</div>
+    </div>
+  `).join('');
+}
+
 function updateInspector() {
   const el = document.getElementById('inspectorBody');
   if (!latestState || !selectedObjectId) return;
   const o = (latestState.objects || []).find(x => x.id === selectedObjectId);
   if (!o) {
-    el.innerHTML = '<span style="color:var(--muted)">Selected object no longer on battlefield.</span>';
+    el.innerHTML = '<span style="color:var(--muted)">Selected object no longer in sight.</span>';
     return;
   }
   const rows = [
-    ['Object ID', `#${o.id}`],
+    ['Object ID', `#${o.id}${o.ghost ? ' (👻 Memory Ghost)' : ''}`],
     ['Template', o.template],
     ['Owner', `${o.owner} (idx ${o.owner_index})`],
     ['Position', `(${o.x.toFixed(0)}, ${o.y.toFixed(0)})`],
     ['Health', `${o.health.toFixed(0)} / ${o.max_health.toFixed(0)}`],
     ['Type', o.commandcenter ? 'Fortress' : (o.structure ? 'Structure' : (o.hero ? 'Hero' : (o.horde ? `Battalion (${o.members_count})` : (o.dozer ? 'Builder' : 'Unit'))))],
-    ['Status', o.attacking ? `⚔️ Attacking #${o.victim_id || o.target_horde_id}` : (o.moving ? `🏃 Moving -> (${o.goal_x.toFixed(0)}, ${o.goal_y.toFixed(0)})` : (o.under_construction ? `🔨 Building (${o.construction_percent.toFixed(0)}%)` : 'Idle / Guarding'))],
+    ['Status', o.attacking ? `⚔️ Attacking #${o.victim_id || o.target_horde_id}` : (o.moving ? `🏃 Moving -> (${o.goal_x.toFixed(0)}, ${o.goal_y.toFixed(0)})` : 'Idle / Guarding')],
     ['Rank / XP', `Rank ${o.rank} (${o.experience} XP)`]
   ];
   el.innerHTML = rows.map(([k, v]) => `<div class="inspector-row"><span style="color:var(--muted)">${k}</span><strong>${v}</strong></div>`).join('');
@@ -1571,16 +1853,7 @@ function updateLogs(logs) {
 }
 
 async function sendControl(action, payload = {}) {
-  try {
-    await fetch('/api/control', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, ...payload })
-    });
-    await pollState();
-  } catch (e) {
-    console.error(e);
-  }
+  await postJSON('/api/control', { action, ...payload });
 }
 
 let isPolling = false;
@@ -1599,7 +1872,7 @@ async function pollState() {
         }
       }
     }
-    const res = await fetch('/api/state');
+    const res = await fetch(`/api/state?role=${encodeURIComponent(currentRole)}`);
     if (res.ok) {
       const data = await res.json();
       updateDashboard(data);
@@ -1610,9 +1883,9 @@ async function pollState() {
   }
 }
 
+setRole(currentRole);
 resizeCanvas();
 setInterval(pollState, 400);
-pollState();
 </script>
 </body>
 </html>
