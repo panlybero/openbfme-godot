@@ -121,7 +121,8 @@ class BfmeAgentClient:
         angle: Optional[float] = None,
     ) -> Dict[str, Any]:
         id_list = [ids] if isinstance(ids, int) else list(ids)
-        return self.request("order_move", ids=id_list, x=x, y=y, type=move_type, angle=angle)
+        norm_type = {"attack_move": "attack", "retreat": "force"}.get(move_type, move_type)
+        return self.request("order_move", ids=id_list, x=x, y=y, type=norm_type, angle=angle)
 
     def order_attack(self, ids: Union[int, Sequence[int]], target_id: int) -> Dict[str, Any]:
         id_list = [ids] if isinstance(ids, int) else list(ids)

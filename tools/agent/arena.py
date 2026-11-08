@@ -15,12 +15,14 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
+import subprocess
 import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from bfme_agent import BfmeAgentClient
 from war_council import (
@@ -30,8 +32,30 @@ from war_council import (
     VALID_MISSION_TYPES,
     VALID_SECTORS,
     create_default_doctrine,
+    is_hero_buildable,
     sanitize_doctrine_update,
 )
+
+AVAILABLE_FACTIONS: Dict[str, str] = {
+    "FactionMen": "Men of the West",
+    "FactionElves": "Elves",
+    "FactionDwarves": "Dwarves",
+    "FactionIsengard": "Isengard",
+    "FactionMordor": "Mordor",
+    "FactionWild": "Goblins",
+    "FactionAngmar": "Angmar",
+}
+
+AVAILABLE_MAPS: Dict[str, str] = {
+    "maps/map mp evendim/map mp evendim.map": "Hills of Evendim (2P)",
+    "maps/map mp fords of isen ii/map mp fords of isen ii.map": "Fords of Isen II (2P)",
+    "maps/map mp fords of isen/map mp fords of isen.map": "Fords of Isen (2P)",
+    "maps/map mp umbar/map mp umbar.map": "Harbors of Umbar (2P)",
+    "maps/map mp tournament mp1/map mp tournament mp1.map": "Tournament Hills (2P)",
+    "maps/map mp weathertop/map mp weathertop.map": "Weathertop (4P)",
+    "maps/map mp fall back 4p/map mp fall back 4p.map": "Fall Back (4P)",
+    "maps/map mp anfalas/map mp anfalas.map": "Anfalas (6P)",
+}
 
 
 # Keep BaseAgent and TacticalCommanderAgent aliases for backwards compatibility with custom scripts
@@ -57,6 +81,7 @@ class ArenaMonitorState:
         cmd1: FivePillarSubCommander,
         cmd2: FivePillarSubCommander,
         llm_bridge: LLMCommanderBridge,
+        initial_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.lock = threading.Lock()
         self.raw_state: Dict[str, Any] = {}
@@ -70,6 +95,54 @@ class ArenaMonitorState:
         self.llm_bridge = llm_bridge
         self.llm_busy: Dict[str, bool] = {"p1": False, "p2": False}
         self.last_llm_auto_frame: Dict[str, int] = {"p1": -999, "p2": -999}
+        self.match_status: str = "PLAYING"
+        self.match_winner: Optional[str] = None
+        self.match_generation: int = 1
+        self.match_config: Dict[str, Any] = initial_config or {
+            "p1_faction": "FactionMen",
+            "p2_faction": "FactionIsengard",
+            "map": "maps/map mp evendim/map mp evendim.map",
+            "time_scale": 1.0,
+            "p1_mode": cmd1.strategist_mode,
+            "p2_mode": cmd2.strategist_mode,
+            "p1_archetype": cmd1.utility_strategist.archetype,
+            "p2_archetype": cmd2.utility_strategist.archetype,
+        }
+        self.pending_new_match: Optional[Dict[str, Any]] = None
+
+    def request_new_match(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
+        with self.lock:
+            merged = dict(self.match_config)
+            if cfg.get("p1_faction") in AVAILABLE_FACTIONS:
+                merged["p1_faction"] = str(cfg["p1_faction"])
+            if cfg.get("p2_faction") in AVAILABLE_FACTIONS:
+                merged["p2_faction"] = str(cfg["p2_faction"])
+            if cfg.get("map") in AVAILABLE_MAPS:
+                merged["map"] = str(cfg["map"])
+            if "time_scale" in cfg:
+                try:
+                    merged["time_scale"] = max(0.25, min(8.0, float(cfg["time_scale"])))
+                except Exception:
+                    pass
+            if cfg.get("p1_mode") in ("utility", "llm", "human"):
+                merged["p1_mode"] = str(cfg["p1_mode"])
+            if cfg.get("p2_mode") in ("utility", "llm", "human"):
+                merged["p2_mode"] = str(cfg["p2_mode"])
+            if cfg.get("p1_archetype") in ARCHETYPE_PRESETS:
+                merged["p1_archetype"] = str(cfg["p1_archetype"])
+            if cfg.get("p2_archetype") in ARCHETYPE_PRESETS:
+                merged["p2_archetype"] = str(cfg["p2_archetype"])
+            self.match_config = merged
+            self.pending_new_match = dict(merged)
+            self.match_status = "STARTING"
+            self.match_winner = None
+            return dict(merged)
+
+    def pop_new_match(self) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            out = self.pending_new_match
+            self.pending_new_match = None
+            return out
 
     def get_commander(self, slot_or_player: str) -> Tuple[str, FivePillarSubCommander]:
         s = (slot_or_player or "p1").lower().strip()
@@ -90,6 +163,8 @@ class ArenaMonitorState:
     def update_terrain(self, terrain: Dict[str, Any]) -> None:
         with self.lock:
             self.terrain_data = terrain
+            self.cmd1.geometry.set_terrain(terrain)
+            self.cmd2.geometry.set_terrain(terrain)
 
     def terrain_json(self) -> bytes:
         with self.lock:
@@ -151,6 +226,10 @@ class ArenaMonitorState:
             objs = fow.get("objects", [])
             my_objs = [o for o in objs if o.get("owner") == cmd.player_name]
             my_structs = [o.get("template") for o in my_objs if o.get("structure")]
+            my_combat_objs = [
+                o for o in my_objs
+                if not o.get("structure") and not o.get("dozer")
+            ]
             my_squads = [
                 {
                     "id": o.get("id"),
@@ -158,10 +237,18 @@ class ArenaMonitorState:
                     "hp_pct": round(100.0 * float(o.get("health", 0)) / max(1.0, float(o.get("max_health", 1)))),
                     "rank": o.get("rank", 1),
                 }
-                for o in my_objs
-                if not o.get("structure") and not o.get("dozer")
+                for o in my_combat_objs
             ]
             my_player = next((p for p in fow.get("players", []) if p.get("name") == cmd.player_name), {})
+            recent_chat = [
+                {
+                    "frame": d.get("frame"),
+                    "role": "High_King" if d.get("kind") == "order" else "Field_General",
+                    "text": d.get("text"),
+                }
+                for d in self.dispatches
+                if d.get("slot") == slot and d.get("kind") in ("order", "general")
+            ][-8:]
             summary = {
                 "frame": frame,
                 "my_player": cmd.player_name,
@@ -170,13 +257,16 @@ class ArenaMonitorState:
                 "command_points": f"{my_player.get('cp_used', 0)}/{my_player.get('cp_limit', 0)}",
                 "power_points": int(my_player.get("power_points", 0)),
                 "my_structures": my_structs,
+                "my_combat_squad_count": len(my_squads),
                 "my_combat_squads": my_squads,
                 "buildable_heroes": [
                     {"template": h.get("template"), "cost": h.get("cost")}
                     for h in my_player.get("heroes", [])
-                    if h.get("buildable") and not h.get("queued_or_alive")
+                    if is_hero_buildable(h, my_combat_objs)
                 ],
+                "active_plan": cmd.active_plan,
                 "fog_of_war_enemy_intel": cmd.intel.summarize_enemy_intel(),
+                "recent_chat_history": recent_chat,
                 "available_sectors": list(VALID_SECTORS),
                 "available_mission_types": list(VALID_MISSION_TYPES),
             }
@@ -229,6 +319,10 @@ class ArenaMonitorState:
                 )
                 with self.lock:
                     cmd.doctrine = sanitize_doctrine_update(cmd.doctrine, doc_payload)
+                    cmd._last_move_cmd.clear()
+                    if human_order:
+                        cmd._via_reached_by_mission.clear()
+                        cmd.utility_strategist.hold_until_frame = f_now + 900
                 self.add_dispatch(
                     f_now,
                     s_key,
@@ -282,6 +376,7 @@ class ArenaMonitorState:
                     "strategist_mode": c.strategist_mode,
                     "llm_busy": self.llm_busy.get(slot_k, False),
                     "doctrine": None if is_hidden else c.doctrine,
+                    "active_plan": None if is_hidden else c.active_plan,
                     "intel": None if is_hidden else c.intel.summarize_enemy_intel(),
                     "sectors": {
                         k: [round(v[0], 1), round(v[1], 1)]
@@ -305,6 +400,12 @@ class ArenaMonitorState:
                 "archetypes": {k: v["label"] for k, v in ARCHETYPE_PRESETS.items()},
                 "valid_missions": list(VALID_MISSION_TYPES),
                 "valid_sectors": list(VALID_SECTORS),
+                "match_status": self.match_status,
+                "match_winner": self.match_winner,
+                "match_generation": self.match_generation,
+                "match_config": self.match_config,
+                "available_factions": AVAILABLE_FACTIONS,
+                "available_maps": AVAILABLE_MAPS,
             }
             return json.dumps(payload).encode("utf-8")
 
@@ -353,8 +454,17 @@ def start_http_monitor(shared: ArenaMonitorState, host: str, port: int) -> Threa
 
             if self.path.startswith("/api/control"):
                 if isinstance(data, dict):
-                    shared.push_control(data)
+                    if data.get("action") == "clear_logs":
+                        with shared.lock:
+                            shared.logs.clear()
+                            shared.dispatches.clear()
+                    else:
+                        shared.push_control(data)
                 self._send_json(b'{"ok":true}')
+
+            elif self.path.startswith("/api/new_match"):
+                cfg = shared.request_new_match(data if isinstance(data, dict) else {})
+                self._send_json(json.dumps({"ok": True, "match_config": cfg}).encode("utf-8"))
 
             elif self.path.startswith("/api/order"):
                 slot = str(data.get("slot", "p1"))
@@ -372,19 +482,26 @@ def start_http_monitor(shared: ArenaMonitorState, host: str, port: int) -> Threa
                     frame = int(shared.raw_state.get("frame", 0))
                     if "strategist_mode" in data and data["strategist_mode"] in ("utility", "llm", "human"):
                         cmd.strategist_mode = str(data["strategist_mode"])
+                        shared.match_config[f"{s_key}_mode"] = cmd.strategist_mode
                     if "archetype" in data and data["archetype"] in ARCHETYPE_PRESETS and data.get("reset_preset"):
                         cmd.doctrine = create_default_doctrine(str(data["archetype"]))
                         cmd.utility_strategist.archetype = str(data["archetype"])
+                        shared.match_config[f"{s_key}_archetype"] = str(data["archetype"])
                     if isinstance(data.get("doctrine"), dict):
                         cmd.doctrine = sanitize_doctrine_update(cmd.doctrine, data["doctrine"])
                     if isinstance(data.get("add_mission"), dict):
                         cur_m = list(cmd.doctrine.get("missions", []))
                         cur_m.append(data["add_mission"])
                         cmd.doctrine = sanitize_doctrine_update(cmd.doctrine, {"missions": cur_m})
+                        cmd._last_move_cmd.clear()
+                        cmd._via_reached_by_mission.clear()
+                        cmd.utility_strategist.hold_until_frame = frame + 900
                     if "remove_mission_id" in data:
                         rm_id = str(data["remove_mission_id"])
                         cur_m = [m for m in cmd.doctrine.get("missions", []) if str(m.get("id")) != rm_id]
                         cmd.doctrine["missions"] = cur_m
+                        cmd._last_move_cmd.clear()
+                        cmd.utility_strategist.hold_until_frame = frame + 900
                 shared.add_dispatch(
                     frame,
                     s_key,
@@ -430,14 +547,65 @@ def format_player_summary(player_name: str, state: Dict[str, Any]) -> str:
     )
 
 
+def infer_winner_from_snapshot(
+    state: Dict[str, Any],
+    cmd1: FivePillarSubCommander,
+    cmd2: FivePillarSubCommander,
+) -> str:
+    objs = state.get("objects", [])
+    s1 = [o for o in objs if o.get("owner") == cmd1.player_name and o.get("structure")]
+    s2 = [o for o in objs if o.get("owner") == cmd2.player_name and o.get("structure")]
+    if len(s1) > len(s2):
+        return f"Commander 1 ({cmd1.faction_hint or cmd1.player_name})"
+    if len(s2) > len(s1):
+        return f"Commander 2 ({cmd2.faction_hint or cmd2.player_name})"
+    return "Victory Achieved"
+
+
+def spawn_openbfme_process(bridge_port: int, cfg: Dict[str, Any]) -> subprocess.Popen:
+    repo_root = Path(__file__).resolve().parents[2]
+    godot_bin = os.environ.get(
+        "GODOT_BIN",
+        str(Path.home() / ".cache" / "godot-4.7.2" / "Godot_v4.7.2-stable_linux.x86_64"),
+    )
+    env = os.environ.copy()
+    env.setdefault("BFME2_INSTALL", "/mnt/t5/bfme-retail/bfme2")
+    env.setdefault("ROTWK_INSTALL", "/mnt/t5/bfme-retail/rotwk")
+    cmd = [
+        godot_bin,
+        "--headless",
+        "--path",
+        str(repo_root / "godot"),
+        "--",
+        "--auto",
+        "--arena",
+        f"--faction={cfg.get('p1_faction', 'FactionMen')}",
+        f"--p2-faction={cfg.get('p2_faction', 'FactionIsengard')}",
+        f"--map={cfg.get('map', 'maps/map mp evendim/map mp evendim.map')}",
+        "--advance=0.5",
+        f"--agent-port={bridge_port}",
+    ]
+    print(f"[Launcher] Spawning OpenBFME: {' '.join(cmd)}")
+    return subprocess.Popen(
+        cmd,
+        cwd=str(repo_root),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="OpenBFME 2-Agent War Council Arena & 2D Tactical Monitor")
     parser.add_argument("--bridge-host", default="127.0.0.1", help="OpenBFME Agent Bridge TCP host")
     parser.add_argument("--bridge-port", type=int, default=8765, help="OpenBFME Agent Bridge TCP port")
     parser.add_argument("--web-host", default="127.0.0.1", help="2D Tactical Web Monitor bind host")
     parser.add_argument("--web-port", type=int, default=8080, help="2D Tactical Web Monitor bind port")
-    parser.add_argument("--step-frames", type=int, default=15, help="Logic frames per agent decision tick")
-    parser.add_argument("--time-scale", type=float, default=2.0, help="Initial simulation time scale")
+    parser.add_argument("--step-frames", type=int, default=4, help="Logic frames per agent decision tick")
+    parser.add_argument("--time-scale", type=float, default=1.0, help="Initial simulation time scale")
+    parser.add_argument("--p1-faction", default="FactionMen", choices=tuple(AVAILABLE_FACTIONS.keys()))
+    parser.add_argument("--p2-faction", default="FactionIsengard", choices=tuple(AVAILABLE_FACTIONS.keys()))
+    parser.add_argument("--map", default="maps/map mp evendim/map mp evendim.map")
     parser.add_argument("--p1-mode", default="utility", choices=("utility", "llm", "human"), help="Player 1 Strategist mode")
     parser.add_argument("--p2-mode", default="utility", choices=("utility", "llm", "human"), help="Player 2 Strategist mode")
     parser.add_argument("--p1-archetype", default="adaptive_tactician", choices=tuple(ARCHETYPE_PRESETS.keys()))
@@ -448,10 +616,20 @@ def main() -> None:
     parser.add_argument("--quit-after", action="store_true", help="Send quit to OpenBFME when finished")
     args = parser.parse_args()
 
+    initial_cfg = {
+        "p1_faction": args.p1_faction,
+        "p2_faction": args.p2_faction,
+        "map": args.map,
+        "time_scale": args.time_scale,
+        "p1_mode": args.p1_mode,
+        "p2_mode": args.p2_mode,
+        "p1_archetype": args.p1_archetype,
+        "p2_archetype": args.p2_archetype,
+    }
     cmd1 = FivePillarSubCommander("Player_1", "Commander 1 (Player_1)", archetype=args.p1_archetype, strategist_mode=args.p1_mode)
     cmd2 = FivePillarSubCommander("Player_2", "Commander 2 (Player_2)", archetype=args.p2_archetype, strategist_mode=args.p2_mode)
     llm_bridge = LLMCommanderBridge(provider=args.llm_provider, model=args.llm_model)
-    shared = ArenaMonitorState(cmd1, cmd2, llm_bridge)
+    shared = ArenaMonitorState(cmd1, cmd2, llm_bridge, initial_config=initial_cfg)
 
     http_server = start_http_monitor(shared, args.web_host, args.web_port)
     print(f"======================================================================")
@@ -459,117 +637,312 @@ def main() -> None:
     print(f"  LLM Provider: {llm_bridge.provider} ({llm_bridge.model})")
     print(f"======================================================================")
 
-    with BfmeAgentClient(host=args.bridge_host, port=args.bridge_port, timeout=30.0) as client:
-        print(f"Waiting for OpenBFME simulation on {args.bridge_host}:{args.bridge_port}...")
-        st = client.wait_until_playing(timeout=180.0)
-        print(f"Connected! Map={st.get('map')} Initial Frame={st.get('frame')}")
+    spawned_proc: Optional[subprocess.Popen] = None
 
-        client.set_time_scale(args.time_scale)
-        raw_state = client.get_state()
-        playable = [p for p in raw_state.get("players", []) if p.get("playable")]
-        if len(playable) >= 1:
-            cmd1.player_name = str(playable[0]["name"])
-            cmd1.intel.player_name = cmd1.player_name
-            cmd1.label = f"Commander 1 ({cmd1.player_name})"
-        if len(playable) >= 2:
-            cmd2.player_name = str(playable[1]["name"])
-            cmd2.intel.player_name = cmd2.player_name
-            cmd2.label = f"Commander 2 ({cmd2.player_name})"
-        print(
-            f"Assigned Slot 0 -> {cmd1.label} [{cmd1.strategist_mode}/{args.p1_archetype}], "
-            f"Slot 1 -> {cmd2.label} [{cmd2.strategist_mode}/{args.p2_archetype}]"
-        )
+    while True:
+        new_cfg = shared.pop_new_match()
+        if new_cfg is not None:
+            # Shut down any existing OpenBFME instance before spawning the new match
+            try:
+                with BfmeAgentClient(host=args.bridge_host, port=args.bridge_port, timeout=3.0) as old_c:
+                    old_c.quit()
+            except Exception:
+                pass
+            if spawned_proc is not None and spawned_proc.poll() is None:
+                try:
+                    spawned_proc.terminate()
+                    spawned_proc.wait(timeout=3.0)
+                except Exception:
+                    try:
+                        spawned_proc.kill()
+                    except Exception:
+                        pass
+            time.sleep(0.6)
+            spawned_proc = spawn_openbfme_process(args.bridge_port, new_cfg)
+            cmd1 = FivePillarSubCommander(
+                "Player_1",
+                "Commander 1 (Player_1)",
+                archetype=new_cfg["p1_archetype"],
+                strategist_mode=new_cfg["p1_mode"],
+            )
+            cmd2 = FivePillarSubCommander(
+                "Player_2",
+                "Commander 2 (Player_2)",
+                archetype=new_cfg["p2_archetype"],
+                strategist_mode=new_cfg["p2_mode"],
+            )
+            with shared.lock:
+                shared.cmd1 = cmd1
+                shared.cmd2 = cmd2
+                shared.logs.clear()
+                shared.dispatches.clear()
+                shared.control_queue.clear()
+                shared.last_llm_auto_frame = {"p1": -999, "p2": -999}
+                shared.match_generation += 1
 
         try:
-            terr = client.get_map_terrain(grid_size=56)
-            if terr.get("ok"):
-                shared.update_terrain(terr)
-        except Exception as e:
-            print(f"Warning: could not fetch map terrain: {e}")
+            client = BfmeAgentClient(host=args.bridge_host, port=args.bridge_port, timeout=30.0)
+            client.connect(retries=45, retry_delay=0.5)
+        except Exception as conn_err:
+            if args.max_ticks == 0 and spawned_proc is None:
+                print(f"No active OpenBFME bridge on {args.bridge_host}:{args.bridge_port} ({conn_err}); spawning default match...")
+                shared.request_new_match(shared.match_config)
+                continue
+            raise
 
-        fow1 = cmd1.intel.update_and_filter(raw_state, cmd1.geometry)
-        fow2 = cmd2.intel.update_and_filter(raw_state, cmd2.geometry)
-        shared.update_states(raw_state, fow1, fow2)
-        shared.add_log(
-            int(raw_state.get("frame", 0)),
-            "SYSTEM",
-            "War Council",
-            f"Match started on {raw_state.get('map')} (speed={args.time_scale}x)",
-        )
+        with client:
+            st_now = client.status()
+            if st_now.get("state") == "SCORE" and args.max_ticks == 0:
+                with shared.lock:
+                    shared.match_status = "ENDED"
+                    if not shared.match_winner:
+                        shared.match_winner = "Previous Match Complete"
+                print("OpenBFME is currently on the SCORE screen. Click '⚔️ New Match' in the UI to launch a new battle.")
+                while shared.pending_new_match is None:
+                    time.sleep(0.25)
+                continue
 
-        paused_by_ui = False
-        tick = 0
-        while True:
-            for ctrl in shared.pop_controls():
-                act = ctrl.get("action")
-                if act == "toggle_pause":
-                    paused_by_ui = not paused_by_ui
-                    client.set_paused(paused_by_ui)
-                elif act == "set_speed":
-                    sc = float(ctrl.get("scale", 1.0))
-                    client.set_time_scale(sc)
-                elif act == "step":
-                    f = int(ctrl.get("frames", 15))
-                    client.step(frames=f, pause_after=True)
-                    paused_by_ui = True
+            print(f"Waiting for OpenBFME simulation on {args.bridge_host}:{args.bridge_port}...")
+            st = client.wait_until_playing(timeout=180.0)
+            print(f"Connected! Map={st.get('map')} Initial Frame={st.get('frame')}")
 
+            active_scale = float(shared.match_config.get("time_scale", args.time_scale))
+            client.set_time_scale(active_scale)
             raw_state = client.get_state()
-            frame = int(raw_state.get("frame", 0))
+            playable = [p for p in raw_state.get("players", []) if p.get("playable")]
+            if len(playable) >= 1:
+                cmd1.player_name = str(playable[0]["name"])
+                cmd1.intel.player_name = cmd1.player_name
+                cmd1.label = f"Commander 1 ({cmd1.player_name})"
+            if len(playable) >= 2:
+                cmd2.player_name = str(playable[1]["name"])
+                cmd2.intel.player_name = cmd2.player_name
+                cmd2.label = f"Commander 2 ({cmd2.player_name})"
+            print(
+                f"Assigned Slot 0 -> {cmd1.label} [{cmd1.strategist_mode}/{cmd1.utility_strategist.archetype}], "
+                f"Slot 1 -> {cmd2.label} [{cmd2.strategist_mode}/{cmd2.utility_strategist.archetype}]"
+            )
 
-            if not paused_by_ui:
-                tick += 1
-                client.set_paused(True)
+            try:
+                terr = client.get_map_terrain(grid_size=56)
+                if terr.get("ok"):
+                    shared.update_terrain(terr)
+            except Exception as e:
+                print(f"Warning: could not fetch map terrain: {e}")
 
-                logs1, fow1 = cmd1.decide(raw_state, client)
-                for line in logs1:
-                    shared.add_log(frame, cmd1.player_name, cmd1.label, line)
-                    print(f"  [F{frame:04d}] [P1 {cmd1.faction_hint or cmd1.player_name}] {line}")
+            fow1 = cmd1.update_fow_only(raw_state)
+            fow2 = cmd2.update_fow_only(raw_state)
+            shared.update_states(raw_state, fow1, fow2)
+            with shared.lock:
+                shared.match_status = "PLAYING"
+                shared.match_winner = None
+                if raw_state.get("map"):
+                    shared.match_config["map"] = str(raw_state.get("map"))
+            shared.add_log(
+                int(raw_state.get("frame", 0)),
+                "SYSTEM",
+                "War Council",
+                f"Match started on {raw_state.get('map')} (speed={active_scale}x)",
+            )
+            shared.add_dispatch(
+                int(raw_state.get("frame", 0)),
+                "p1",
+                cmd1.player_name,
+                "War Council",
+                f"New battle commenced on {AVAILABLE_MAPS.get(str(raw_state.get('map')), raw_state.get('map'))}. Issue orders at will, My Liege.",
+                kind="ui",
+            )
 
-                logs2, fow2 = cmd2.decide(raw_state, client)
-                for line in logs2:
-                    shared.add_log(frame, cmd2.player_name, cmd2.label, line)
-                    print(f"  [F{frame:04d}] [P2 {cmd2.faction_hint or cmd2.player_name}] {line}")
+            paused_by_ui = False
+            stop_ai_thread = threading.Event()
+            if args.max_ticks == 0:
+                client.set_paused(False)
 
-                shared.update_states(raw_state, fow1, fow2)
+            def _ai_commander_worker() -> None:
+                """Background AI Sub-Commander thread using a dedicated second TCP connection so it never blocks telemetry or pauses the sim."""
+                tick = 0
+                last_decided_frame = -1
+                try:
+                    with BfmeAgentClient(host=args.bridge_host, port=args.bridge_port, timeout=30.0) as ai_client:
+                        while not stop_ai_thread.is_set():
+                            if paused_by_ui or shared.match_status != "PLAYING":
+                                time.sleep(0.15)
+                                continue
+                            with shared.lock:
+                                snap = shared.raw_state
+                            frame = int(snap.get("frame", 0))
+                            if not snap.get("objects") or frame <= last_decided_frame:
+                                time.sleep(0.06)
+                                continue
 
-                # Trigger periodic Autonomous LLM Strategist review if either player is in `llm` mode
-                for s_key, c in (("p1", cmd1), ("p2", cmd2)):
-                    if c.strategist_mode == "llm" and (frame - shared.last_llm_auto_frame[s_key] >= 180):
-                        shared.last_llm_auto_frame[s_key] = frame
-                        shared.trigger_async_llm_consultation(s_key, human_order=None)
+                            last_decided_frame = frame
+                            tick += 1
 
-                if tick == 1 or tick % 5 == 0:
-                    p1_s = format_player_summary(cmd1.player_name, raw_state)
-                    p2_s = format_player_summary(cmd2.player_name, raw_state)
-                    print(
-                        f"[Tick {tick:03d} | F{frame:04d}] "
-                        f"P1({cmd1.faction_hint or cmd1.player_name}): {p1_s}  ||  "
-                        f"P2({cmd2.faction_hint or cmd2.player_name}): {p2_s}"
-                    )
+                            logs1, _ = cmd1.decide(snap, ai_client)
+                            for line in logs1:
+                                shared.add_log(frame, cmd1.player_name, cmd1.label, line)
+                                print(f"  [F{frame:04d}] [P1 {cmd1.faction_hint or cmd1.player_name}] {line}")
 
-                vic = raw_state.get("victory", {})
-                if vic.get("victory") or vic.get("defeat"):
-                    print(f"\nMatch concluded at frame {frame}! Victory report: {vic}")
-                    shared.add_log(frame, "SYSTEM", "War Council", f"Match concluded: {vic}")
-                    break
+                            logs2, _ = cmd2.decide(snap, ai_client)
+                            for line in logs2:
+                                shared.add_log(frame, cmd2.player_name, cmd2.label, line)
+                                print(f"  [F{frame:04d}] [P2 {cmd2.faction_hint or cmd2.player_name}] {line}")
 
-                if args.max_ticks > 0 and tick >= args.max_ticks:
+                            for s_key, c in (("p1", cmd1), ("p2", cmd2)):
+                                if c.last_completed_goal:
+                                    msg_done = c.last_completed_goal
+                                    c.last_completed_goal = None
+                                    shared.add_dispatch(
+                                        frame,
+                                        s_key,
+                                        c.player_name,
+                                        f"Quartermaster ({c.faction_hint or c.player_name})",
+                                        msg_done,
+                                        kind="general",
+                                    )
+                                if c.strategist_mode == "llm" and (frame - shared.last_llm_auto_frame[s_key] >= 180):
+                                    shared.last_llm_auto_frame[s_key] = frame
+                                    shared.trigger_async_llm_consultation(s_key, human_order=None)
+
+                            if tick == 1 or tick % 5 == 0:
+                                p1_s = format_player_summary(cmd1.player_name, snap)
+                                p2_s = format_player_summary(cmd2.player_name, snap)
+                                print(
+                                    f"[Tick {tick:03d} | F{frame:04d}] "
+                                    f"P1({cmd1.faction_hint or cmd1.player_name}): {p1_s}  ||  "
+                                    f"P2({cmd2.faction_hint or cmd2.player_name}): {p2_s}"
+                                )
+
+                            time.sleep(0.22)
+                except Exception as exc:
+                    if not stop_ai_thread.is_set():
+                        print(f"[AI Commander Thread Warning] {exc}")
+
+            if args.max_ticks == 0:
+                ai_thread = threading.Thread(target=_ai_commander_worker, daemon=True)
+                ai_thread.start()
+
+                telemetry_ticks = 0
+                while shared.pending_new_match is None:
+                    for ctrl in shared.pop_controls():
+                        act = ctrl.get("action")
+                        if act == "toggle_pause" and shared.match_status in ("PLAYING", "PAUSED"):
+                            paused_by_ui = not paused_by_ui
+                            client.set_paused(paused_by_ui)
+                            with shared.lock:
+                                shared.match_status = "PAUSED" if paused_by_ui else "PLAYING"
+                        elif act == "set_speed":
+                            sc = float(ctrl.get("scale", 1.0))
+                            client.set_time_scale(sc)
+                            with shared.lock:
+                                shared.match_config["time_scale"] = sc
+                        elif act == "step" and shared.match_status in ("PLAYING", "PAUSED"):
+                            f = int(ctrl.get("frames", 15))
+                            client.step(frames=f, pause_after=True)
+                            paused_by_ui = True
+                            with shared.lock:
+                                shared.match_status = "PAUSED"
+                        elif act == "give_money" and shared.match_status in ("PLAYING", "PAUSED"):
+                            amt = int(ctrl.get("amount", 2000))
+                            target_slot = str(ctrl.get("slot", "both"))
+                            with shared.lock:
+                                players_list = shared.raw_state.get("players", [])
+                            for s_k, c_obj in (("p1", cmd1), ("p2", cmd2)):
+                                if target_slot in ("both", s_k):
+                                    p_entry = next((p for p in players_list if p.get("name") == c_obj.player_name), None)
+                                    if p_entry is not None and "index" in p_entry:
+                                        client.give_money(amt, player_index=int(p_entry["index"]))
+                                        shared.add_log(
+                                            int(shared.raw_state.get("frame", 0)),
+                                            c_obj.player_name,
+                                            "War Council Sandbox",
+                                            f"Granted +${amt} emergency war chest to {c_obj.label}",
+                                        )
+
+                    if shared.match_status == "ENDED":
+                        time.sleep(0.25)
+                        continue
+
                     raw_state = client.get_state()
+                    if raw_state.get("ok") is False or (telemetry_ticks > 20 and len(raw_state.get("objects", [])) == 0):
+                        with shared.lock:
+                            last_frame = int(shared.raw_state.get("frame", 0))
+                            winner_str = infer_winner_from_snapshot(shared.raw_state, cmd1, cmd2)
+                            shared.match_status = "ENDED"
+                            shared.match_winner = winner_str
+                        shared.add_log(
+                            last_frame,
+                            "SYSTEM",
+                            "War Council",
+                            f"🏆 Match concluded! Winner: {winner_str}. Click '⚔️ New Match' to play again.",
+                        )
+                        shared.add_dispatch(
+                            last_frame,
+                            "p1",
+                            cmd1.player_name,
+                            "War Council Herald",
+                            f"🏆 Battle Concluded — Winner: {winner_str}! Open '⚔️ New Match' to launch the next skirmish.",
+                            kind="general",
+                        )
+                        print(f"\nMatch concluded at frame {last_frame}! Winner: {winner_str}")
+                        continue
+
+                    frame = int(raw_state.get("frame", 0))
+                    telemetry_ticks += 1
+                    fow1 = cmd1.update_fow_only(raw_state)
+                    fow2 = cmd2.update_fow_only(raw_state)
                     shared.update_states(raw_state, fow1, fow2)
-                    print(f"\nReached --max-ticks={args.max_ticks} at frame {raw_state.get('frame')}.")
-                    break
 
-                client.step(frames=args.step_frames, pause_after=False)
+                    vic = raw_state.get("victory", {})
+                    if vic.get("victory") or vic.get("defeat"):
+                        winner_str = infer_winner_from_snapshot(raw_state, cmd1, cmd2)
+                        with shared.lock:
+                            shared.match_status = "ENDED"
+                            shared.match_winner = winner_str
+                        print(f"\nMatch concluded at frame {frame}! Victory report: {vic}")
+                        shared.add_log(frame, "SYSTEM", "War Council", f"Match concluded: {winner_str}")
+                        continue
+
+                    time.sleep(0.05 if not paused_by_ui else 0.20)
+
+                stop_ai_thread.set()
+                continue
             else:
-                # Keep FOW states updated while paused so UI role switching works immediately
-                fow1 = cmd1.intel.update_and_filter(raw_state, cmd1.geometry)
-                fow2 = cmd2.intel.update_and_filter(raw_state, cmd2.geometry)
-                shared.update_states(raw_state, fow1, fow2)
-                time.sleep(0.25)
+                # Deterministic step-mode for CLI `--max-ticks` verification
+                tick = 0
+                while True:
+                    raw_state = client.get_state()
+                    frame = int(raw_state.get("frame", 0))
+                    tick += 1
+                    client.set_paused(True)
+                    logs1, fow1 = cmd1.decide(raw_state, client)
+                    for line in logs1:
+                        shared.add_log(frame, cmd1.player_name, cmd1.label, line)
+                        print(f"  [F{frame:04d}] [P1 {cmd1.faction_hint or cmd1.player_name}] {line}")
+                    logs2, fow2 = cmd2.decide(raw_state, client)
+                    for line in logs2:
+                        shared.add_log(frame, cmd2.player_name, cmd2.label, line)
+                        print(f"  [F{frame:04d}] [P2 {cmd2.faction_hint or cmd2.player_name}] {line}")
+                    shared.update_states(raw_state, fow1, fow2)
+                    if tick == 1 or tick % 5 == 0:
+                        p1_s = format_player_summary(cmd1.player_name, raw_state)
+                        p2_s = format_player_summary(cmd2.player_name, raw_state)
+                        print(
+                            f"[Tick {tick:03d} | F{frame:04d}] "
+                            f"P1({cmd1.faction_hint or cmd1.player_name}): {p1_s}  ||  "
+                            f"P2({cmd2.faction_hint or cmd2.player_name}): {p2_s}"
+                        )
+                    if tick >= args.max_ticks:
+                        raw_state = client.get_state()
+                        shared.update_states(raw_state, fow1, fow2)
+                        print(f"\nReached --max-ticks={args.max_ticks} at frame {raw_state.get('frame')}.")
+                        break
+                    client.step(frames=args.step_frames, pause_after=False)
 
-        if args.quit_after:
-            print("Sending quit command to OpenBFME...")
-            client.quit()
+                if args.quit_after:
+                    print("Sending quit command to OpenBFME...")
+                    client.quit()
+                break
 
     http_server.shutdown()
 

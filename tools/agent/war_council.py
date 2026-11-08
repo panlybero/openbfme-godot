@@ -49,6 +49,7 @@ ECONOMY_KEYWORDS = (
 )
 BARRACKS_KEYWORDS = (
     "barracks",
+    "archerrange",
     "archery",
     "urukpit",
     "wargpit",
@@ -57,11 +58,19 @@ BARRACKS_KEYWORDS = (
     "fissure",
     "spiderpit",
     "stable",
+    "greenpasture",
     "workshop",
     "forgeworks",
     "siegeworks",
+    "foundry",
+    "hallofwarriors",
     "hallofkings",
     "templeoftwilight",
+    "darkdungeon",
+    "wolfden",
+    "trollcage",
+    "haradrimpalace",
+    "mumakilpen",
     "rhudaur",
 )
 SKIP_BUILD_KEYWORDS = (
@@ -75,9 +84,14 @@ SKIP_BUILD_KEYWORDS = (
     "beacon",
     "tower",
     "sentry",
+    "fortress",
+    "marketplace",
 )
 PIKE_KEYWORDS = (
     "pike",
+    "spearmen",
+    "spear",
+    "towershieldguard",
     "towerguard",
     "phalanx",
     "mithlond",
@@ -117,6 +131,99 @@ NEUTRAL_TECH_KEYWORDS = (
     "beacon",
     "shipwright",
 )
+ARMORY_KEYWORDS = (
+    "forge",
+    "armory",
+    "treasuretrove",
+    "tavern",
+)
+TECH_UPGRADE_KEYWORDS = (
+    "forgedblades",
+    "heavyarmor",
+    "basictraining",
+    "firearrows",
+    "silverthornarrows",
+    "mithrilmail",
+    "darkironblades",
+    "darkironarmor",
+    "icearrows",
+    "poisonarrows",
+    "firestones",
+)
+
+
+def is_hero_buildable(h: Dict[str, Any], my_combat: List[Dict[str, Any]]) -> bool:
+    """
+    Determine if a hero entry from `my_player["heroes"]` can be queued right now.
+    Handles both live C++ engine keys (`dead`, `in_production`, `template`) and mock keys (`buildable`).
+    Excludes `CreateAHero` unless explicitly requested.
+    """
+    h_tmpl = str(h.get("template", "")).lower().strip()
+    if not h_tmpl or "createahero" in h_tmpl:
+        return False
+    if "buildable" in h:
+        return bool(h.get("buildable")) and not bool(h.get("queued_or_alive", False))
+    if h.get("dead", False) or h.get("in_production", False):
+        return False
+    for u in my_combat:
+        if u.get("hero") and str(u.get("template", "")).lower().strip() == h_tmpl:
+            return False
+    return True
+
+
+def is_hero_recruited_or_queued(
+    hero_query: str,
+    my_player: Dict[str, Any],
+    my_combat: List[Dict[str, Any]],
+    fortress: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return True if a hero matching `hero_query` is alive on the field or queued in production."""
+    q = (hero_query or "").lower().strip()
+    if not q:
+        return False
+    for u in my_combat:
+        if u.get("hero") and q in str(u.get("template", "")).lower():
+            return True
+    for h in my_player.get("heroes", []):
+        h_tmpl = str(h.get("template", "")).lower()
+        if q in h_tmpl and (h.get("in_production", False) or float(h.get("progress", 0.0)) > 0.0):
+            return True
+    if fortress:
+        for item in fortress.get("production_queue", []) or []:
+            if q in str(item.get("template", "")).lower():
+                return True
+    return False
+
+
+def find_matching_hero_entry(
+    hero_query: str,
+    my_player: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Find a hero entry in `my_player['heroes']` matching `hero_query` (e.g. 'gandalf' -> 'GondorGandalf')."""
+    q = (hero_query or "").lower().strip()
+    if not q:
+        return None
+    for h in my_player.get("heroes", []):
+        h_tmpl = str(h.get("template", "")).lower()
+        if "createahero" in h_tmpl and "create" not in q:
+            continue
+        if q in h_tmpl:
+            return h
+    return None
+
+
+def classify_factory_roles(tmpl: str) -> List[str]:
+    """Return which unit roles a military production building can train."""
+    t = str(tmpl or "").lower()
+    if any(k in t for k in ("stable", "greenpasture", "wargpit", "spiderpit", "wolfden")):
+        return ["cavalry"]
+    if any(k in t for k in ("archerrange", "archery")):
+        return ["archer"]
+    if any(k in t for k in ("workshop", "siegeworks", "forgeworks", "foundry", "trollcage", "mumakilpen", "entmoot")):
+        return ["siege"]
+    if any(k in t for k in ("urukpit", "orcpit", "orcspit", "fissure", "hallofwarriors", "hallofkings", "templeoftwilight", "darkdungeon", "haradrimpalace")):
+        return ["infantry", "pike", "archer"]
+    return ["infantry", "pike"]
 
 
 def classify_unit_role(obj_or_tmpl: Any) -> str:
@@ -127,20 +234,20 @@ def classify_unit_role(obj_or_tmpl: Any) -> str:
             return "siege"
         if obj_or_tmpl.get("cavalry") or "warg" in tmpl or "rider" in tmpl or "knight" in tmpl or "rohirrim" in tmpl or "spider" in tmpl:
             return "cavalry"
-        if obj_or_tmpl.get("archer") or "archer" in tmpl or "crossbow" in tmpl or "bow" in tmpl or "ranger" in tmpl or "axe" in tmpl:
-            return "archer"
         if any(k in tmpl for k in PIKE_KEYWORDS):
             return "pike"
+        if obj_or_tmpl.get("archer") or "archer" in tmpl or "crossbow" in tmpl or "bow" in tmpl or "ranger" in tmpl or "axe" in tmpl:
+            return "archer"
         return "infantry"
     tmpl = str(obj_or_tmpl).lower()
     if any(k in tmpl for k in SIEGE_KEYWORDS):
         return "siege"
     if "warg" in tmpl or "rider" in tmpl or "knight" in tmpl or "rohirrim" in tmpl or "cavalry" in tmpl or "spiderling" in tmpl or "chariot" in tmpl:
         return "cavalry"
-    if "archer" in tmpl or "crossbow" in tmpl or "bow" in tmpl or "ranger" in tmpl or "axethrower" in tmpl or "spearthrower" in tmpl:
-        return "archer"
     if any(k in tmpl for k in PIKE_KEYWORDS):
         return "pike"
+    if "archer" in tmpl or "crossbow" in tmpl or "bow" in tmpl or "ranger" in tmpl or "axethrower" in tmpl or "spearthrower" in tmpl:
+        return "archer"
     return "infantry"
 
 
@@ -161,6 +268,91 @@ class MapSectorGeometry:
         self.enemy_guess_x = 3800.0
         self.enemy_guess_y = 3800.0
         self._initialized_home = False
+        self._has_terrain_bounds = False
+        self._guess_idx = 0
+        self._heights: List[float] = []
+        self._cols: int = 0
+        self._rows: int = 0
+        self._min_z: float = 0.0
+        self._max_z: float = 100.0
+
+    def set_terrain(self, terrain: Dict[str, Any]) -> None:
+        """Ingest accurate map bounds and heightmap from `get_map_terrain` so sectors avoid water/lakes."""
+        if not terrain or not terrain.get("ok"):
+            return
+        self.min_x = float(terrain.get("min_x", 0.0))
+        self.min_y = float(terrain.get("min_y", 0.0))
+        self.max_x = max(1000.0, float(terrain.get("max_x", 4800.0)))
+        self.max_y = max(1000.0, float(terrain.get("max_y", 4800.0)))
+        self._has_terrain_bounds = True
+        self._heights = [float(x) for x in terrain.get("heights", [])]
+        self._cols = int(terrain.get("cols", 0))
+        self._rows = int(terrain.get("rows", 0))
+        self._min_z = float(terrain.get("min_z", 0.0))
+        self._max_z = float(terrain.get("max_z", 100.0))
+        if self._initialized_home:
+            self.enemy_guess_x, self.enemy_guess_y = self._snap_to_dry_land(
+                max(400.0, min(self.max_x - 400.0, self.max_x - self.home_x)),
+                max(400.0, min(self.max_y - 400.0, self.max_y - self.home_y)),
+            )
+
+    def _sample_height(self, wx: float, wy: float) -> float:
+        if not self._heights or self._cols <= 1 or self._rows <= 1:
+            return 50.0
+        span_x = max(1.0, self.max_x - self.min_x)
+        span_y = max(1.0, self.max_y - self.min_y)
+        gx = max(0, min(self._cols - 1, int(round(((wx - self.min_x) / span_x) * (self._cols - 1)))))
+        gy = max(0, min(self._rows - 1, int(round(((wy - self.min_y) / span_y) * (self._rows - 1)))))
+        idx = gy * self._cols + gx
+        if 0 <= idx < len(self._heights):
+            return self._heights[idx]
+        return 50.0
+
+    def _snap_to_dry_land(self, wx: float, wy: float) -> Tuple[float, float]:
+        """If (wx, wy) falls in low-lying water (e.g. Lake Evendim), spiral outward to dry passable land."""
+        wx = max(self.min_x + 250.0, min(self.max_x - 250.0, wx))
+        wy = max(self.min_y + 250.0, min(self.max_y - 250.0, wy))
+        if not self._heights or (self._max_z - self._min_z) < 18.0:
+            return (wx, wy)
+        water_thresh = self._min_z + 4.5
+        if self._sample_height(wx, wy) > water_thresh:
+            return (wx, wy)
+        # Search concentric rings biased toward home base for dry ground
+        base_ang = math.atan2(self.home_y - wy, self.home_x - wx)
+        for radius in range(220, 1800, 180):
+            for step in range(16):
+                offset = (step // 2) * (0.38 if step % 2 == 0 else -0.38)
+                ang = base_ang + offset
+                cx = max(self.min_x + 300.0, min(self.max_x - 300.0, wx + math.cos(ang) * radius))
+                cy = max(self.min_y + 300.0, min(self.max_y - 300.0, wy + math.sin(ang) * radius))
+                if self._sample_height(cx, cy) > water_thresh + 2.0:
+                    return (cx, cy)
+        return (wx, wy)
+
+    def rotate_enemy_guess(self) -> None:
+        """Advance enemy base guess through candidate map spawn points when previous guess was empty."""
+        m = 650.0
+        cx = (self.min_x + self.max_x) * 0.5
+        cy = (self.min_y + self.max_y) * 0.5
+        candidates = [
+            (self.max_x - m, m),
+            (m, self.max_y - m),
+            (self.max_x - m, self.max_y - m),
+            (m, m),
+            (self.max_x - m, cy),
+            (m, cy),
+            (cx, m),
+            (cx, self.max_y - m),
+        ]
+        # Filter out candidates near our own home base
+        valid = [
+            self._snap_to_dry_land(c[0], c[1])
+            for c in candidates
+            if math.hypot(c[0] - self.home_x, c[1] - self.home_y) > 900.0
+        ]
+        if valid:
+            self._guess_idx = (self._guess_idx + 1) % len(valid)
+            self.enemy_guess_x, self.enemy_guess_y = valid[self._guess_idx]
 
     def update_bounds(
         self,
@@ -168,12 +360,13 @@ class MapSectorGeometry:
         my_fortress: Optional[Dict[str, Any]],
         known_enemy_structures: List[Dict[str, Any]],
     ) -> None:
-        w = float(map_extent.get("width") or map_extent.get("max_x") or 4800.0)
-        h = float(map_extent.get("height") or map_extent.get("max_y") or 4800.0)
-        if w > 500.0:
-            self.max_x = w
-        if h > 500.0:
-            self.max_y = h
+        if not self._has_terrain_bounds:
+            w = float(map_extent.get("width") or map_extent.get("max_x") or 4800.0)
+            h = float(map_extent.get("height") or map_extent.get("max_y") or 4800.0)
+            if w > 500.0:
+                self.max_x = w
+            if h > 500.0:
+                self.max_y = h
 
         if my_fortress:
             self.home_x = float(my_fortress["x"])
@@ -181,8 +374,9 @@ class MapSectorGeometry:
             if not self._initialized_home:
                 self._initialized_home = True
                 # Mirror across map center for initial unexplored enemy base guess
-                self.enemy_guess_x = max(400.0, min(self.max_x - 400.0, self.max_x - self.home_x))
-                self.enemy_guess_y = max(400.0, min(self.max_y - 400.0, self.max_y - self.home_y))
+                gx = max(400.0, min(self.max_x - 400.0, self.max_x - self.home_x))
+                gy = max(400.0, min(self.max_y - 400.0, self.max_y - self.home_y))
+                self.enemy_guess_x, self.enemy_guess_y = self._snap_to_dry_land(gx, gy)
 
         if known_enemy_structures:
             efort = next((s for s in known_enemy_structures if s.get("commandcenter")), None)
@@ -201,20 +395,22 @@ class MapSectorGeometry:
         dist = max(1.0, math.hypot(dx, dy))
         ux, uy = dx / dist, dy / dist
 
-        stage_x = max(250.0, min(self.max_x - 250.0, self.home_x + ux * 340.0))
-        stage_y = max(250.0, min(self.max_y - 250.0, self.home_y + uy * 340.0))
+        stage_x, stage_y = self._snap_to_dry_land(
+            max(250.0, min(self.max_x - 250.0, self.home_x + ux * 340.0)),
+            max(250.0, min(self.max_y - 250.0, self.home_y + uy * 340.0)),
+        )
 
-        margin = 550.0
+        margin = 600.0
         return {
             "home_base": (self.home_x, self.home_y),
             "forward_staging": (stage_x, stage_y),
-            "center": (cx, cy),
-            "north_flank": (cx, max(margin, self.max_y - margin)),
-            "south_flank": (cx, min(self.max_y - margin, self.min_y + margin)),
-            "east_flank": (max(margin, self.max_x - margin), cy),
-            "west_flank": (min(self.max_x - margin, self.min_x + margin), cy),
+            "center": self._snap_to_dry_land(cx, cy),
+            "north_flank": self._snap_to_dry_land(cx, max(margin, self.max_y - margin)),
+            "south_flank": self._snap_to_dry_land(cx, min(self.max_y - margin, self.min_y + margin)),
+            "east_flank": self._snap_to_dry_land(max(margin, self.max_x - margin), cy),
+            "west_flank": self._snap_to_dry_land(min(self.max_x - margin, self.min_x + margin), cy),
             "enemy_base": (self.enemy_guess_x, self.enemy_guess_y),
-            "enemy_expansion": (
+            "enemy_expansion": self._snap_to_dry_land(
                 self.enemy_guess_x - ux * 260.0,
                 self.enemy_guess_y - uy * 260.0,
             ),
@@ -234,6 +430,8 @@ class MapSectorGeometry:
                 lairs = [
                     o for o in neutral_objs
                     if any(k in str(o.get("template", "")).lower() for k in CREEP_LAIR_KEYWORDS)
+                    and "hole" not in str(o.get("template", "")).lower()
+                    and "rubble" not in str(o.get("template", "")).lower()
                 ]
                 if lairs:
                     best = min(lairs, key=lambda o: math.hypot(float(o["x"]) - self.home_x, float(o["y"]) - self.home_y))
@@ -242,6 +440,8 @@ class MapSectorGeometry:
                 techs = [
                     o for o in neutral_objs
                     if any(k in str(o.get("template", "")).lower() for k in NEUTRAL_TECH_KEYWORDS)
+                    and "hole" not in str(o.get("template", "")).lower()
+                    and "rubble" not in str(o.get("template", "")).lower()
                 ]
                 if techs:
                     best = min(techs, key=lambda o: math.hypot(float(o["x"]) - self.home_x, float(o["y"]) - self.home_y))
@@ -317,6 +517,22 @@ class PlayerIntelMemory:
         live_enemy_ids: set[int] = set()
 
         for o in all_objs:
+            tmpl_l = str(o.get("template", "")).lower()
+            if "arrow" in tmpl_l or "projectile" in tmpl_l or "thrown" in tmpl_l:
+                continue
+            if o.get("playable_owner", True) and not (
+                o.get("structure") or o.get("horde") or o.get("hero") or o.get("machine") or o.get("dozer")
+            ):
+                continue
+            if "role" not in o:
+                if o.get("structure"):
+                    o["role"] = "structure"
+                elif o.get("hero"):
+                    o["role"] = "hero"
+                elif o.get("dozer"):
+                    o["role"] = "dozer"
+                else:
+                    o["role"] = classify_unit_role(o)
             owner = str(o.get("owner", ""))
             oid = int(o["id"])
             if owner == self.player_name:
@@ -510,6 +726,7 @@ def create_default_doctrine(archetype: str = "adaptive_tactician") -> Dict[str, 
         "economy_target_farms": int(preset["economy_target_farms"]),
         "reserve_gold": 0,
         "saving_for": None,
+        "active_goal": None,
         "attack_wave_size": int(preset["attack_wave_size"]),
         "retreat_health_threshold": float(preset["retreat_health_threshold"]),
         "unit_mix_weights": dict(preset["unit_mix_weights"]),
@@ -530,6 +747,57 @@ def create_default_doctrine(archetype: str = "adaptive_tactician") -> Dict[str, 
     }
 
 
+def _sanitize_until_state(raw_until: Any) -> Dict[str, Any]:
+    """Sanitize a declarative `until_state` partial-state dictionary."""
+    if not isinstance(raw_until, dict):
+        return {}
+    clean: Dict[str, Any] = {}
+    if raw_until.get("hero_recruited"):
+        clean["hero_recruited"] = str(raw_until["hero_recruited"]).strip()
+    if raw_until.get("min_gold") is not None:
+        try:
+            clean["min_gold"] = max(100, min(10000, int(raw_until["min_gold"])))
+        except Exception:
+            pass
+    if raw_until.get("min_farms") is not None:
+        try:
+            clean["min_farms"] = max(1, min(16, int(raw_until["min_farms"])))
+        except Exception:
+            pass
+    if isinstance(raw_until.get("required_structures"), list):
+        reqs = [str(s).strip() for s in raw_until["required_structures"] if str(s).strip()]
+        if reqs:
+            clean["required_structures"] = reqs[:6]
+    if raw_until.get("min_total_squads") is not None:
+        try:
+            clean["min_total_squads"] = max(1, min(20, int(raw_until["min_total_squads"])))
+        except Exception:
+            pass
+    if isinstance(raw_until.get("min_role_squads"), dict):
+        role_reqs: Dict[str, int] = {}
+        for r, cnt in raw_until["min_role_squads"].items():
+            rk = str(r).lower().strip()
+            if rk in ("infantry", "pike", "archer", "cavalry", "siege"):
+                try:
+                    c_int = int(cnt)
+                    if c_int > 0:
+                        role_reqs[rk] = min(12, c_int)
+                except Exception:
+                    pass
+        if role_reqs:
+            clean["min_role_squads"] = role_reqs
+    if raw_until.get("upgraded_squad_ratio") is not None:
+        try:
+            clean["upgraded_squad_ratio"] = max(0.1, min(1.0, float(raw_until["upgraded_squad_ratio"])))
+        except Exception:
+            pass
+    if raw_until.get("all_squads_at_sector"):
+        sec = str(raw_until["all_squads_at_sector"]).lower().strip().replace(" ", "_")
+        if sec in VALID_SECTORS:
+            clean["all_squads_at_sector"] = sec
+    return clean
+
+
 def sanitize_doctrine_update(current: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
     """Safely merge an LLM or UI update into `current` doctrine without allowing invalid fields."""
     out = copy.deepcopy(current)
@@ -539,7 +807,7 @@ def sanitize_doctrine_update(current: Dict[str, Any], update: Dict[str, Any]) ->
         out["posture"] = str(update["posture"]).lower()
     if "economy_target_farms" in update:
         try:
-            out["economy_target_farms"] = max(1, min(9, int(update["economy_target_farms"])))
+            out["economy_target_farms"] = max(1, min(16, int(update["economy_target_farms"])))
         except Exception:
             pass
     if "reserve_gold" in update:
@@ -550,6 +818,34 @@ def sanitize_doctrine_update(current: Dict[str, Any], update: Dict[str, Any]) ->
     if "saving_for" in update:
         val = update["saving_for"]
         out["saving_for"] = str(val).strip() if val else None
+    if "active_goal" in update:
+        ag = update["active_goal"]
+        if ag is None:
+            out["active_goal"] = None
+        elif isinstance(ag, dict):
+            until_st = _sanitize_until_state(ag.get("until_state", ag))
+            if out.get("saving_for") and not until_st.get("hero_recruited"):
+                until_st["hero_recruited"] = out["saving_for"]
+            if until_st.get("hero_recruited") and not out.get("saving_for"):
+                out["saving_for"] = until_st["hero_recruited"]
+            if until_st:
+                on_comp = str(ag.get("on_complete", "resume_autopilot")).lower().strip()
+                if on_comp not in ("resume_autopilot", "hold_posture"):
+                    on_comp = "resume_autopilot"
+                out["active_goal"] = {
+                    "description": str(ag.get("description") or f"Goal: {json.dumps(until_st)}")[:120],
+                    "until_state": until_st,
+                    "on_complete": on_comp,
+                }
+            else:
+                out["active_goal"] = None
+    elif out.get("saving_for") and not out.get("active_goal"):
+        # Automatically synthesize a persistent active_goal if saving_for was set without explicit active_goal
+        out["active_goal"] = {
+            "description": f"Save treasury and recruit {out['saving_for']}",
+            "until_state": {"hero_recruited": out["saving_for"]},
+            "on_complete": "resume_autopilot",
+        }
     if "attack_wave_size" in update:
         try:
             out["attack_wave_size"] = max(1, min(8, int(update["attack_wave_size"])))
@@ -619,6 +915,8 @@ class UtilityStrategist:
     def __init__(self, archetype: str = "adaptive_tactician") -> None:
         self.archetype = archetype
         self._last_review_frame = -999
+        self._last_flank_switch_frame = -999
+        self.hold_until_frame = -1
         self._flank_toggle = 0
 
     def maybe_review(
@@ -630,9 +928,18 @@ class UtilityStrategist:
         geometry: MapSectorGeometry,
         doctrine: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], Optional[str]]:
-        if frame - self._last_review_frame < 60:
+        # Never overwrite an active persistent Decree (`active_goal` or `saving_for`)!
+        # The Programmatic Goal Evaluator + Quartermaster owns goal lifecycle until `until_state` is satisfied.
+        if doctrine.get("active_goal") or doctrine.get("saving_for"):
+            return doctrine, None
+        if frame < self.hold_until_frame or frame - self._last_review_frame < 60:
             return doctrine, None
         self._last_review_frame = frame
+
+        # Only rotate attack/raid flank every 600 frames (~2 minutes) so battalions actually finish their flanking march!
+        if frame - self._last_flank_switch_frame >= 600:
+            self._last_flank_switch_frame = frame
+            self._flank_toggle = (self._flank_toggle + 1) % 3
 
         all_objs = fow_state.get("objects", [])
         my_objs = [o for o in all_objs if o.get("owner") == player_name]
@@ -645,10 +952,14 @@ class UtilityStrategist:
         creep_lairs = [
             o for o in neutral_objs
             if any(k in str(o.get("template", "")).lower() for k in CREEP_LAIR_KEYWORDS)
+            and "hole" not in str(o.get("template", "")).lower()
+            and "rubble" not in str(o.get("template", "")).lower()
         ]
         neutral_techs = [
             o for o in neutral_objs
             if any(k in str(o.get("template", "")).lower() for k in NEUTRAL_TECH_KEYWORDS)
+            and "hole" not in str(o.get("template", "")).lower()
+            and "rubble" not in str(o.get("template", "")).lower()
         ]
 
         my_player = next((p for p in fow_state.get("players", []) if p.get("name") == player_name), {})
@@ -675,7 +986,7 @@ class UtilityStrategist:
             doctrine["posture"] = "defensive"
             new_missions.append(
                 {
-                    "id": f"util_def_{frame}",
+                    "id": "util_def",
                     "type": "DEFEND",
                     "sector": "home_base",
                     "via_sector": None,
@@ -690,33 +1001,27 @@ class UtilityStrategist:
             preset = ARCHETYPE_PRESETS.get(doctrine.get("archetype", self.archetype), ARCHETYPE_PRESETS["adaptive_tactician"])
             doctrine["posture"] = preset["posture"]
 
-            # 1. If enemy base is not yet discovered, keep a SCOUT mission active
+            # 1. If enemy base is not yet discovered, keep a SCOUT mission active on enemy_base
             if not intel.enemy_base_discovered:
-                unexplored = [
-                    s for s in ("enemy_base", "center", "north_flank", "south_flank")
-                    if s not in intel.explored_sectors
-                ]
-                scout_target = unexplored[0] if unexplored else "enemy_base"
                 new_missions.append(
                     {
-                        "id": f"util_scout_{frame}",
+                        "id": "util_scout",
                         "type": "SCOUT",
-                        "sector": scout_target,
+                        "sector": "enemy_base",
                         "via_sector": None,
                         "squad_filter": "any",
                         "min_squads": 1,
                         "status": "ACTIVE",
-                        "note": f"Reconnaissance toward {scout_target}",
+                        "note": "Reconnaissance sweeping candidate enemy stronghold locations",
                     }
                 )
 
             # 2. If we have cavalry or are a raider archetype, launch a flank RAID on enemy economy
             if (len(my_cavalry) >= 1 or doctrine.get("archetype") == "aggressive_raider") and len(my_combat) >= 2:
-                self._flank_toggle = 1 - self._flank_toggle
-                flank = "north_flank" if self._flank_toggle == 0 else "south_flank"
+                flank = "north_flank" if (self._flank_toggle % 2) == 0 else "south_flank"
                 new_missions.append(
                     {
-                        "id": f"util_raid_{frame}",
+                        "id": "util_raid",
                         "type": "RAID",
                         "sector": "enemy_expansion",
                         "via_sector": flank,
@@ -731,7 +1036,7 @@ class UtilityStrategist:
             if creep_lairs and len(my_combat) >= 1 and (frame < 2400 or doctrine.get("archetype") == "creep_hero_boom"):
                 new_missions.append(
                     {
-                        "id": f"util_creep_{frame}",
+                        "id": "util_creep",
                         "type": "CLEAR_CREEPS",
                         "sector": "nearest_creep_lair",
                         "via_sector": None,
@@ -744,7 +1049,7 @@ class UtilityStrategist:
             elif neutral_techs and len(my_combat) >= 2 and frame < 1800:
                 new_missions.append(
                     {
-                        "id": f"util_cap_{frame}",
+                        "id": "util_cap",
                         "type": "CAPTURE_NEUTRAL",
                         "sector": "nearest_outpost",
                         "via_sector": None,
@@ -758,11 +1063,10 @@ class UtilityStrategist:
             # 4. Main combined-arms push when army reaches wave threshold
             wave_req = int(doctrine.get("attack_wave_size", 3))
             if len(my_combat) >= wave_req:
-                self._flank_toggle = (self._flank_toggle + 1) % 3
-                via = ("center", "north_flank", "south_flank")[self._flank_toggle]
+                via = ("center", "north_flank", "south_flank")[self._flank_toggle % 3]
                 new_missions.append(
                     {
-                        "id": f"util_atk_{frame}",
+                        "id": "util_atk",
                         "type": "ATTACK",
                         "sector": "enemy_base",
                         "via_sector": via if via != "center" else None,
@@ -772,11 +1076,10 @@ class UtilityStrategist:
                         "note": f"Combined-arms offensive toward enemy stronghold via {via}",
                     }
                 )
-                dispatch = f"[Utility General] Marshaling {len(my_combat)} battalions for offensive push via {via}!"
             else:
                 new_missions.append(
                     {
-                        "id": f"util_stage_{frame}",
+                        "id": "util_stage",
                         "type": "DEFEND",
                         "sector": "forward_staging",
                         "via_sector": None,
@@ -829,6 +1132,81 @@ class FivePillarSubCommander:
         self._via_reached_by_mission: Dict[str, bool] = {}
         self._upgraded_structures: set[int] = set()
         self._last_power_frame = -999
+        self._last_macro_frame = -999
+        self._last_hero_queue_frame = -999
+        self._dozer_btn_cache: Dict[str, List[Dict[str, Any]]] = {}
+        self._fac_btn_cache: Dict[int, Tuple[int, List[Dict[str, Any]]]] = {}
+        self._obj_detail_cache: Dict[int, Tuple[int, Dict[str, Any]]] = {}
+        self._last_move_cmd: Dict[int, Tuple[int, float, float, float, float]] = {}
+        self.active_plan: List[Dict[str, Any]] = []
+        self.last_completed_goal: Optional[str] = None
+        self._fow_lock = threading.Lock()
+
+    def _get_cached_object_detail(
+        self,
+        client: BfmeAgentClient,
+        obj_id: int,
+        frame: int,
+        ttl: int = 25,
+    ) -> Dict[str, Any]:
+        cached = self._obj_detail_cache.get(obj_id)
+        if cached is not None and (frame - cached[0]) < ttl:
+            return cached[1]
+        resp = client.get_object(obj_id)
+        if resp.get("ok"):
+            self._obj_detail_cache[obj_id] = (frame, resp)
+            return resp
+        return cached[1] if cached else {}
+
+    def update_fow_only(self, raw_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Thread-safe Fog-of-War & Sector Geometry update for high-frequency telemetry."""
+        with self._fow_lock:
+            raw_my_objs = [o for o in raw_state.get("objects", []) if o.get("owner") == self.player_name]
+            my_fort = next((o for o in raw_my_objs if o.get("commandcenter")), raw_my_objs[0] if raw_my_objs else None)
+            self.geometry.update_bounds(
+                raw_state.get("map_extent", {}),
+                my_fort,
+                list(self.intel.memory_structures.values()),
+            )
+            fow_state = self.intel.update_and_filter(raw_state, self.geometry)
+            self.geometry.update_bounds(
+                raw_state.get("map_extent", {}),
+                my_fort,
+                list(self.intel.memory_structures.values()),
+            )
+            return fow_state
+
+    def _ready_for_move(
+        self,
+        units: List[Dict[str, Any]],
+        tx: float,
+        ty: float,
+        frame: int,
+        min_dist: float = 240.0,
+    ) -> Tuple[List[int], bool]:
+        """
+        Filter idle units that need a move command toward (tx, ty).
+        Returns (unit_ids_to_order, stuck_on_unreachable_target).
+        """
+        to_order: List[int] = []
+        stuck = False
+        for u in units:
+            uid = int(u["id"])
+            ux, uy = float(u["x"]), float(u["y"])
+            if math.hypot(ux - tx, uy - ty) <= min_dist:
+                continue
+            prev = self._last_move_cmd.get(uid)
+            if prev is not None:
+                p_frame, p_tx, p_ty, p_ux, p_uy = prev
+                same_target = math.hypot(tx - p_tx, ty - p_ty) < 90.0
+                if same_target and (frame - p_frame) < 35:
+                    continue
+                if same_target and (frame - p_frame) >= 35 and math.hypot(ux - p_ux, uy - p_uy) < 35.0:
+                    stuck = True
+                    continue
+            self._last_move_cmd[uid] = (frame, tx, ty, ux, uy)
+            to_order.append(uid)
+        return to_order, stuck
 
     def decide(
         self,
@@ -843,22 +1221,8 @@ class FivePillarSubCommander:
         actions: List[str] = []
         frame = int(raw_state.get("frame", 0))
 
-        # Identify our fortress first so geometry knows home_base
-        raw_my_objs = [o for o in raw_state.get("objects", []) if o.get("owner") == self.player_name]
-        my_fort = next((o for o in raw_my_objs if o.get("commandcenter")), raw_my_objs[0] if raw_my_objs else None)
-        self.geometry.update_bounds(
-            raw_state.get("map_extent", {}),
-            my_fort,
-            list(self.intel.memory_structures.values()),
-        )
-
         # Filter state through strict Fog of War + Memory Map
-        fow_state = self.intel.update_and_filter(raw_state, self.geometry)
-        self.geometry.update_bounds(
-            raw_state.get("map_extent", {}),
-            my_fort,
-            list(self.intel.memory_structures.values()),
-        )
+        fow_state = self.update_fow_only(raw_state)
 
         all_vis_objs = fow_state.get("objects", [])
         my_objs = [o for o in all_vis_objs if o.get("owner") == self.player_name]
@@ -898,6 +1262,8 @@ class FivePillarSubCommander:
         my_factories = [
             o for o in my_structs
             if not o.get("commandcenter")
+            and "citadel" not in str(o.get("template", "")).lower()
+            and "fortress" not in str(o.get("template", "")).lower()
             and (
                 o.get("fs_factory")
                 or any(k in str(o.get("template", "")).lower() for k in BARRACKS_KEYWORDS)
@@ -908,24 +1274,491 @@ class FivePillarSubCommander:
             o for o in my_objs
             if not o.get("structure") and not o.get("dozer") and (o.get("horde") or o.get("hero") or o.get("machine"))
         ]
+        my_hordes = [o for o in my_combat if o.get("horde")]
 
         stage_x, stage_y = self.geometry.resolve_sector("forward_staging")
+
+        # Balance against our own current army composition
+        my_role_counts = {"infantry": 0, "pike": 0, "archer": 0, "cavalry": 0, "siege": 0}
+        for u in my_combat:
+            if not u.get("hero"):
+                r = classify_unit_role(u)
+                my_role_counts[r] = my_role_counts.get(r, 0) + 1
+
+        # Determine which unit roles our current military buildings can actually produce
+        covered_roles: set[str] = set()
+        for f in my_factories:
+            for r in classify_factory_roles(str(f.get("template", ""))):
+                covered_roles.add(r)
+
+        run_macro = (frame - self._last_macro_frame) >= 10
+        if run_macro:
+            self._last_macro_frame = frame
+
+        # --------------------------------------------------------------------
+        # PILLAR 0: Declarative Partial-State Evaluator (`until_state`),
+        #           Backward-Chaining Prerequisite Planner & Quartermaster
+        # --------------------------------------------------------------------
+        plan_steps: List[Dict[str, Any]] = []
+        planned_dozer_targets: List[Dict[str, Any]] = []
+
+        # Prerequisite 0: If we have 0 Builders/Porters alive, train a replacement Porter at the Fortress!
+        if not my_dozers and not fortress.get("production_queue"):
+            fort_det = self._get_cached_object_detail(client, int(fortress["id"]), frame, ttl=25)
+            porter_btns = [
+                b for b in (fort_det.get("commands", []) or [])
+                if b.get("command") == "UNIT_BUILD"
+                and b.get("object")
+                and ("porter" in str(b.get("object", "")).lower() or "builder" in str(b.get("object", "")).lower())
+            ]
+            if porter_btns:
+                p_tmpl = str(porter_btns[0]["object"])
+                p_cost = int(porter_btns[0].get("cost", 500))
+                plan_steps.append({
+                    "priority": 99,
+                    "kind": "TRAIN_PORTER",
+                    "template": p_tmpl,
+                    "label": f"Train replacement {p_tmpl} at Fortress",
+                    "cost": p_cost,
+                    "status": "PENDING",
+                })
+
+        # Synthesize active_goal if saving_for was set directly
+        if saving_for and not self.doctrine.get("active_goal"):
+            self.doctrine["active_goal"] = {
+                "description": f"Save treasury and recruit {self.doctrine['saving_for']}",
+                "until_state": {"hero_recruited": self.doctrine["saving_for"]},
+                "on_complete": "resume_autopilot",
+            }
+
+        active_goal = self.doctrine.get("active_goal")
+        if isinstance(active_goal, dict) and isinstance(active_goal.get("until_state"), dict):
+            until_st = active_goal["until_state"]
+            unmet_reasons: List[str] = []
+
+            # 1. Check `min_farms` (prerequisite economy expansion before expensive locks if under-developed)
+            if until_st.get("min_farms") is not None:
+                req_farms = int(until_st["min_farms"])
+                completed_farms = len([s for s in my_eco_structs if not s.get("under_construction")])
+                if completed_farms < req_farms:
+                    unmet_reasons.append(f"farms {completed_farms}/{req_farms}")
+                    self.doctrine["economy_target_farms"] = max(int(self.doctrine.get("economy_target_farms", 5)), req_farms)
+                    if len(my_eco_structs) < req_farms:
+                        plan_steps.append({
+                            "priority": 97 if len(my_eco_structs) < min(req_farms, 7) else 89,
+                            "kind": "BUILD_FARM",
+                            "label": f"Expand economy ({len(my_eco_structs)}/{req_farms} farms)",
+                            "cost": 300,
+                            "status": "PENDING",
+                        })
+
+            # 2. Check `hero_recruited`
+            hero_req = str(until_st.get("hero_recruited") or saving_for or "").strip()
+            if hero_req:
+                if not is_hero_recruited_or_queued(hero_req, my_player, my_combat, fortress):
+                    h_entry = find_matching_hero_entry(hero_req, my_player)
+                    if h_entry:
+                        h_tmpl = str(h_entry.get("template", hero_req))
+                        h_cost = int(h_entry.get("cost", 3000))
+                        h_idx = int(h_entry.get("index", 0))
+                    else:
+                        h_tmpl = hero_req
+                        h_cost = max(1100, reserve_gold) if reserve_gold > 0 else 3000
+                        h_idx = 0
+                    unmet_reasons.append(f"recruit {h_tmpl} (${money}/${h_cost})")
+                    # If player also asked to build economy and has < 6 farms, build up to 6 farms first so income isn't starved
+                    if (
+                        until_st.get("min_farms") is None
+                        and self.doctrine.get("posture") == "boom"
+                        and len(my_eco_structs) < min(6, int(self.doctrine.get("economy_target_farms", 6)))
+                    ):
+                        plan_steps.append({
+                            "priority": 97,
+                            "kind": "BUILD_FARM",
+                            "label": f"Build prerequisite economy ({len(my_eco_structs)}/6 farms) to fund {h_tmpl}",
+                            "cost": 300,
+                            "status": "PENDING",
+                        })
+                    plan_steps.append({
+                        "priority": 96,
+                        "kind": "QUEUE_HERO",
+                        "label": f"Recruit Hero {h_tmpl}",
+                        "template": h_tmpl,
+                        "hero_index": h_idx,
+                        "has_entry": bool(h_entry),
+                        "cost": h_cost,
+                        "status": "PENDING",
+                    })
+
+            # 3. Check `min_gold`
+            if until_st.get("min_gold") is not None:
+                req_gold = int(until_st["min_gold"])
+                if money < req_gold:
+                    unmet_reasons.append(f"gold ${money}/${req_gold}")
+                    if not hero_req:
+                        plan_steps.append({
+                            "priority": 95,
+                            "kind": "SAVE_GOLD",
+                            "label": f"Accumulate treasury (${money} / ${req_gold})",
+                            "cost": req_gold,
+                            "status": "PENDING",
+                        })
+
+            # 4. Check `required_structures`
+            for req_s in until_st.get("required_structures", []) or []:
+                req_s_low = str(req_s).lower().strip()
+                if not any(req_s_low in str(s.get("template", "")).lower() and not s.get("under_construction") for s in my_structs):
+                    unmet_reasons.append(f"build {req_s}")
+                    if not any(req_s_low in str(s.get("template", "")).lower() for s in my_structs):
+                        plan_steps.append({
+                            "priority": 95,
+                            "kind": "BUILD_STRUCT",
+                            "target": str(req_s),
+                            "label": f"Construct {req_s}",
+                            "cost": 700,
+                            "status": "PENDING",
+                        })
+
+            # 5. Check `min_role_squads`
+            if isinstance(until_st.get("min_role_squads"), dict):
+                for r_key, r_cnt in until_st["min_role_squads"].items():
+                    req_c = int(r_cnt)
+                    cur_c = my_role_counts.get(r_key, 0)
+                    if cur_c < req_c:
+                        unmet_reasons.append(f"{r_key} {cur_c}/{req_c}")
+                        self.doctrine["unit_mix_weights"][r_key] = max(
+                            float(self.doctrine["unit_mix_weights"].get(r_key, 1.0)), 2.4
+                        )
+                        if r_key not in covered_roles:
+                            plan_steps.append({
+                                "priority": 94,
+                                "kind": "BUILD_ROLE_FACTORY",
+                                "role": r_key,
+                                "label": f"Construct {r_key} production building (prereq for {r_key})",
+                                "cost": 600,
+                                "status": "PENDING",
+                            })
+                        plan_steps.append({
+                            "priority": 91,
+                            "kind": "TRAIN_ROLE",
+                            "role": r_key,
+                            "label": f"Train {r_key} battalions ({cur_c}/{req_c})",
+                            "cost": 400,
+                            "status": "PENDING",
+                        })
+
+            # 6. Check `min_total_squads`
+            if until_st.get("min_total_squads") is not None:
+                req_tot = int(until_st["min_total_squads"])
+                if len(my_combat) < req_tot:
+                    unmet_reasons.append(f"squads {len(my_combat)}/{req_tot}")
+                    plan_steps.append({
+                        "priority": 90,
+                        "kind": "TRAIN_ANY",
+                        "label": f"Muster army ({len(my_combat)}/{req_tot} squads)",
+                        "cost": 350,
+                        "status": "PENDING",
+                    })
+
+            # 7. Check `upgraded_squad_ratio` (Backward-Chaining Forge -> Tech -> Equip Hordes)
+            if until_st.get("upgraded_squad_ratio") is not None:
+                req_ratio = float(until_st["upgraded_squad_ratio"])
+                fort_det = self._get_cached_object_detail(client, int(fortress["id"]), frame, ttl=20)
+                player_upgs = set(fort_det.get("upgrades", {}).get("player", []) or [])
+                unlocked_tech_kws = {
+                    kw for kw in TECH_UPGRADE_KEYWORDS
+                    if kw != "firestones" and any(kw in str(pu).lower() for pu in player_upgs)
+                }
+
+                # Do we have an Armory/Forge building?
+                armory_structs = [
+                    s for s in my_structs
+                    if any(k in str(s.get("template", "")).lower() for k in ARMORY_KEYWORDS)
+                ]
+                tech_structs = [
+                    s for s in my_structs
+                    if not s.get("under_construction")
+                    and any(
+                        k in str(s.get("template", "")).lower()
+                        for k in ARMORY_KEYWORDS + ("archerrange", "archery")
+                    )
+                ]
+                if not armory_structs:
+                    plan_steps.append({
+                        "priority": 95,
+                        "kind": "BUILD_ARMORY",
+                        "label": "Construct Forge/Armory (unlocks weapon & armor upgrades)",
+                        "cost": 1000,
+                        "status": "PENDING",
+                    })
+
+                # Check unresearched player technologies on completed Armory/Forge/ArcheryRange buildings
+                for ts in tech_structs:
+                    ts_id = int(ts["id"])
+                    ts_det = self._get_cached_object_detail(client, ts_id, frame, ttl=18)
+                    ts_obj_upgs = {str(u).lower() for u in ts_det.get("upgrades", {}).get("object", []) or []}
+                    ts_q_tmpls = {
+                        str(q.get("template", "")).lower()
+                        for q in (ts_det.get("production", {}).get("queue", []) or ts.get("production_queue", []) or [])
+                    }
+                    if ts_q_tmpls:
+                        plan_steps.append({
+                            "priority": 94,
+                            "kind": "WAIT_RESEARCH",
+                            "label": f"Researching {next(iter(ts_q_tmpls))} at {ts['template']} #{ts_id}",
+                            "cost": 0,
+                            "status": "IN_PROGRESS",
+                        })
+                        continue
+                    has_l2 = any("level2" in u or "level3" in u for u in ts_obj_upgs)
+                    has_l3 = any("level3" in u for u in ts_obj_upgs)
+                    ts_cmds = ts_det.get("commands", []) or []
+                    p_btns = [
+                        b for b in ts_cmds
+                        if b.get("command") == "PLAYER_UPGRADE"
+                        and b.get("upgrade")
+                        and b["upgrade"] not in player_upgs
+                        and str(b["upgrade"]).lower() not in ts_q_tmpls
+                    ]
+                    lvl_btns = [
+                        b for b in ts_cmds
+                        if b.get("command") == "OBJECT_UPGRADE"
+                        and b.get("upgrade")
+                        and str(b["upgrade"]).lower() not in ts_obj_upgs
+                        and str(b["upgrade"]).lower() not in ts_q_tmpls
+                    ]
+                    for pb in p_btns:
+                        u_name = str(pb["upgrade"])
+                        u_low = u_name.lower()
+                        needs_l3 = any(k in u_low for k in ("heavyarmor", "mithril", "darkironarmor"))
+                        needs_l2 = needs_l3 or any(
+                            k in u_low
+                            for k in ("forgedblades", "silverthorn", "darkironblades", "firearrows", "icearrows", "poisonarrows")
+                        )
+                        if (needs_l2 and not has_l2) or (needs_l3 and not has_l3):
+                            if lvl_btns:
+                                l_upg = str(lvl_btns[0]["upgrade"])
+                                plan_steps.append({
+                                    "priority": 94,
+                                    "kind": "RESEARCH_TECH",
+                                    "struct_id": ts_id,
+                                    "upgrade": l_upg,
+                                    "label": f"Upgrade {ts['template']} #{ts_id} ({l_upg})",
+                                    "cost": 500 if not has_l2 else 1000,
+                                    "status": "PENDING",
+                                })
+                                break
+                        else:
+                            plan_steps.append({
+                                "priority": 93,
+                                "kind": "RESEARCH_TECH",
+                                "struct_id": ts_id,
+                                "upgrade": u_name,
+                                "label": f"Research {u_name} at {ts['template']} #{ts_id}",
+                                "cost": 1000,
+                                "status": "PENDING",
+                            })
+                            break
+
+                # Check each deployed horde's equipped upgrades
+                equipped_hordes = 0
+                min_upgs_per_horde = 2 if req_ratio >= 0.9 else 1
+                for h_unit in my_hordes:
+                    hid = int(h_unit["id"])
+                    h_det = self._get_cached_object_detail(client, hid, frame, ttl=20)
+                    raw_h_upgs = {str(u) for u in (h_det.get("upgrades", {}).get("object", []) or [])}
+                    is_rank2_plus = (
+                        any(u.startswith("Upgrade_ObjectLevel") and u != "Upgrade_ObjectLevel1" for u in raw_h_upgs)
+                        or int(h_unit.get("rank", 1)) >= 2
+                    )
+                    h_obj_upgs = {u for u in raw_h_upgs if not u.startswith("Upgrade_ObjectLevel")}
+                    h_q_tmpls = {
+                        str(q.get("template", "")).lower()
+                        for q in (h_det.get("production", {}).get("queue", []) or [])
+                    }
+                    h_btns = [
+                        b for b in (h_det.get("commands", []) or [])
+                        if b.get("command") == "OBJECT_UPGRADE" and b.get("upgrade")
+                    ]
+                    missing_unlocked_on_horde = []
+                    for hb in h_btns:
+                        hu_name = str(hb["upgrade"])
+                        hu_low = hu_name.lower()
+                        if hu_name in h_obj_upgs or hu_low in h_q_tmpls:
+                            continue
+                        # Rank 2+ veteran battalions already have a Banner Carrier and cannot purchase BasicTraining
+                        if "basictraining" in hu_low and is_rank2_plus:
+                            continue
+                        if any(kw in hu_low for kw in unlocked_tech_kws):
+                            missing_unlocked_on_horde.append(hu_name)
+                            if not h_q_tmpls:
+                                plan_steps.append({
+                                    "priority": 92,
+                                    "kind": "EQUIP_HORDE",
+                                    "horde_id": hid,
+                                    "upgrade": hu_name,
+                                    "label": f"Equip {h_unit['template']} #{hid} with {hu_name}",
+                                    "cost": 300,
+                                    "status": "PENDING",
+                                })
+                                break
+                    effective_upg_count = len(h_obj_upgs) + (1 if (is_rank2_plus and not any("basictraining" in u.lower() for u in h_obj_upgs)) else 0)
+                    if effective_upg_count >= min_upgs_per_horde and not missing_unlocked_on_horde and not h_q_tmpls:
+                        equipped_hordes += 1
+
+                cur_ratio = (equipped_hordes / len(my_hordes)) if my_hordes else 0.0
+                pending_forge_tech = any(
+                    s.get("kind") in ("BUILD_ARMORY", "RESEARCH_TECH", "WAIT_RESEARCH")
+                    for s in plan_steps
+                )
+                if not my_hordes or len(unlocked_tech_kws) < min_upgs_per_horde or cur_ratio < req_ratio or (req_ratio >= 0.9 and pending_forge_tech):
+                    unmet_reasons.append(
+                        f"upgraded hordes {equipped_hordes}/{len(my_hordes)} (techs: {len(unlocked_tech_kws)})"
+                    )
+
+            # 8. Check `all_squads_at_sector`
+            if until_st.get("all_squads_at_sector"):
+                sec_name = str(until_st["all_squads_at_sector"])
+                sx, sy = self.geometry.resolve_sector(sec_name)
+                far_cnt = sum(
+                    1 for u in my_combat
+                    if math.hypot(float(u["x"]) - sx, float(u["y"]) - sy) > 620.0
+                )
+                if far_cnt > 0:
+                    unmet_reasons.append(f"{far_cnt} squad(s) en route to {sec_name}")
+
+            # Did we satisfy all conditions in `until_state`?
+            if not unmet_reasons:
+                desc = str(active_goal.get("description") or "Active Decree")
+                on_comp = str(active_goal.get("on_complete", "resume_autopilot"))
+                self.doctrine["active_goal"] = None
+                self.doctrine["saving_for"] = None
+                self.doctrine["reserve_gold"] = 0
+                if on_comp == "resume_autopilot":
+                    self.utility_strategist.hold_until_frame = frame
+                comp_msg = f"[Decree Completed] '{desc}' satisfied — resuming adaptive operations!"
+                self.last_completed_goal = comp_msg
+                actions.append(comp_msg)
+
+        # Quartermaster Execution & Strict Top-Down Budget Allocation
+        plan_steps.sort(key=lambda s: int(s.get("priority", 50)), reverse=True)
+        available_gold = money
+        for step in plan_steps:
+            skind = step.get("kind")
+            scost = int(step.get("cost", 0))
+            if skind == "WAIT_RESEARCH":
+                continue
+            elif skind == "TRAIN_PORTER":
+                if available_gold >= scost and not fortress.get("production_queue") and run_macro:
+                    qres = client.queue_unit(int(fortress["id"]), str(step["template"]))
+                    if qres.get("ok"):
+                        money -= scost
+                        available_gold = max(0, available_gold - scost)
+                        step["status"] = "EXECUTING"
+                        actions.append(
+                            f"[Quartermaster] Fortress #{fortress['id']} training replacement builder {step['template']} (${scost})"
+                        )
+                        continue
+                step["status"] = f"SAVING (${money} / ${scost})"
+                available_gold = max(0, available_gold - scost)
+            elif skind == "QUEUE_HERO":
+                if (
+                    available_gold >= scost
+                    and not fortress.get("production_queue")
+                    and step.get("has_entry")
+                    and (frame - self._last_hero_queue_frame) >= 25
+                ):
+                    hres = client.queue_hero(int(fortress["id"]), hero_index=int(step.get("hero_index", 0)))
+                    if hres.get("ok"):
+                        self._last_hero_queue_frame = frame
+                        money -= scost
+                        available_gold = max(0, available_gold - scost)
+                        step["status"] = "EXECUTING"
+                        actions.append(
+                            f"[Quartermaster] Fortress #{fortress['id']} recruiting Hero {step['template']} (${scost})"
+                        )
+                        continue
+                step["status"] = f"SAVING (${money} / ${scost})"
+                available_gold = max(0, available_gold - scost)
+            elif skind == "RESEARCH_TECH":
+                sid = int(step["struct_id"])
+                u_name = str(step["upgrade"])
+                if available_gold >= scost and run_macro:
+                    ures = client.queue_upgrade(sid, u_name)
+                    if ures.get("ok"):
+                        money -= scost
+                        available_gold = max(0, available_gold - scost)
+                        self._obj_detail_cache.pop(sid, None)
+                        self._obj_detail_cache.pop(int(fortress["id"]), None)
+                        step["status"] = "EXECUTING"
+                        actions.append(f"[Quartermaster] Structure #{sid} researching {u_name}")
+                        continue
+                step["status"] = f"SAVING (${money} / ${scost})"
+                available_gold = max(0, available_gold - scost)
+            elif skind == "EQUIP_HORDE":
+                hid = int(step["horde_id"])
+                u_name = str(step["upgrade"])
+                if available_gold >= scost and run_macro:
+                    ures = client.queue_upgrade(hid, u_name)
+                    if ures.get("ok"):
+                        money -= scost
+                        available_gold = max(0, available_gold - scost)
+                        self._obj_detail_cache.pop(hid, None)
+                        step["status"] = "EXECUTING"
+                        actions.append(f"[Quartermaster] Battalion #{hid} equipping {u_name}")
+                        continue
+                step["status"] = f"SAVING (${money} / ${scost})"
+                available_gold = max(0, available_gold - scost)
+            elif skind in ("BUILD_ARMORY", "BUILD_STRUCT", "BUILD_ROLE_FACTORY", "BUILD_FARM"):
+                if available_gold >= scost:
+                    step["status"] = "READY_FOR_BUILDER"
+                    planned_dozer_targets.append(step)
+                else:
+                    step["status"] = f"SAVING (${money} / ${scost})"
+                available_gold = max(0, available_gold - scost)
+            elif skind in ("SAVE_GOLD", "TRAIN_ROLE", "TRAIN_ANY"):
+                if skind == "SAVE_GOLD":
+                    step["status"] = f"SAVING (${money} / ${scost})"
+                    available_gold = max(0, available_gold - scost)
+                else:
+                    step["status"] = "ACTIVE"
+
+        # Lock gold reserved by higher-priority Quartermaster steps so routine factory/dozer loops cannot spend it!
+        quartermaster_reserved_gold = max(0, money - available_gold)
+        factory_reserve_gold = max(reserve_gold, quartermaster_reserved_gold)
+        self.active_plan = [
+            {
+                "priority": s.get("priority"),
+                "kind": s.get("kind"),
+                "label": s.get("label"),
+                "cost": s.get("cost"),
+                "status": s.get("status"),
+            }
+            for s in plan_steps[:5]
+        ]
 
         # --------------------------------------------------------------------
         # PILLAR 1: Dynamic Counter-Production, Tech Upgrades & Hero Recruitment
         # --------------------------------------------------------------------
-        # Check if we are explicitly saving for a named hero/item first
+        # Autonomous hero recruitment when no conflicting decree lock is active
         active_heroes = [o for o in my_combat if o.get("hero")]
-        if (money >= 1000 or saving_for) and len(active_heroes) < 2 and not fortress.get("production_queue"):
+        if (
+            not self.doctrine.get("active_goal")
+            and (money >= 1100 + factory_reserve_gold or saving_for)
+            and len(active_heroes) < 2
+            and not fortress.get("production_queue")
+            and (frame - self._last_hero_queue_frame) >= 25
+        ):
             for h in my_player.get("heroes", []):
                 h_tmpl = str(h.get("template", ""))
                 h_cost = int(h.get("cost", 1100))
-                if h.get("buildable") and not h.get("queued_or_alive"):
+                if is_hero_buildable(h, my_combat):
                     if saving_for and saving_for not in h_tmpl.lower():
                         continue
-                    if h_cost <= money:
+                    if h_cost <= (money - factory_reserve_gold if not saving_for else money):
                         hres = client.queue_hero(int(fortress["id"]), hero_index=int(h.get("index", 0)))
                         if hres.get("ok"):
+                            self._last_hero_queue_frame = frame
                             money -= h_cost
                             if saving_for and saving_for in h_tmpl.lower():
                                 self.doctrine["saving_for"] = None
@@ -948,14 +1781,37 @@ class FivePillarSubCommander:
             if eroles.get("archer", 0) / total_e >= 0.35:
                 role_weights["cavalry"] = role_weights.get("cavalry", 1.0) * 1.8
 
-        # Balance against our own current army composition so we don't spam 100% of one unit unless ordered
-        my_role_counts = {"infantry": 0, "pike": 0, "archer": 0, "cavalry": 0, "siege": 0}
-        for u in my_combat:
-            if not u.get("hero"):
-                r = classify_unit_role(u)
-                my_role_counts[r] = my_role_counts.get(r, 0) + 1
+        missing_desired_roles = {
+            r for r, w in role_weights.items()
+            if float(w) >= 0.8 and r not in covered_roles
+        }
+        cp_used = int(my_player.get("cp_used", my_player.get("command_points_used", 0)))
+        cp_limit = int(my_player.get("cp_limit", my_player.get("command_points_limit", 0)))
+
+        # If we urgently need to construct a missing role factory (e.g. Stable $600 or Workshop $700) and have >= 2 squads,
+        # reserve $600 from routine unit training so Barracks don't starve the Porter!
+        if missing_desired_roles and len(my_eco_structs) >= 2 and len(my_combat) >= 2 and len(my_factories) < 6:
+            factory_reserve_gold = max(factory_reserve_gold, 600)
+
+        high_priority_understaffed = {
+            r for r, w in role_weights.items()
+            if (float(w) >= 1.8 and my_role_counts.get(r, 0) < 3)
+            or (float(w) >= 0.85 and my_role_counts.get(r, 0) == 0 and r in covered_roles)
+        }
 
         completed_factories = [f for f in my_factories if not f.get("under_construction")]
+        # Sort factories by scarcity-adjusted role weight so under-represented roles (cavalry, archer, siege) get first pick of CP & gold!
+        completed_factories.sort(
+            key=lambda f: max(
+                (
+                    float(role_weights.get(r, 1.0)) / (1.0 + 0.65 * my_role_counts.get(r, 0))
+                    for r in classify_factory_roles(str(f.get("template", "")))
+                ),
+                default=0.5,
+            ),
+            reverse=True,
+        )
+
         for fac in completed_factories:
             fac_id = int(fac["id"])
             if fac_id not in self._rally_set_for:
@@ -963,16 +1819,29 @@ class FivePillarSubCommander:
                 self._rally_set_for.add(fac_id)
 
             q = fac.get("production_queue", [])
-            if len(q) >= 1:
+            if len(q) >= 1 or not run_macro:
                 continue
 
-            btns_resp = client.get_command_buttons(fac_id)
-            buttons = btns_resp.get("buttons", []) if btns_resp.get("ok") else []
+            cached_fac = self._fac_btn_cache.get(fac_id)
+            if cached_fac is not None and (frame - cached_fac[0]) < 45 and (cp_limit == 0 or cp_limit - cp_used >= 60):
+                buttons = cached_fac[1]
+            else:
+                btns_resp = client.get_command_buttons(fac_id)
+                buttons = btns_resp.get("buttons", []) if btns_resp.get("ok") else []
+                if buttons:
+                    self._fac_btn_cache[fac_id] = (frame, buttons)
+            fac_roles = classify_factory_roles(str(fac.get("template", "")))
+            fac_needs_first_unit = any(
+                my_role_counts.get(r, 0) == 0 and float(role_weights.get(r, 0.0)) >= 0.8
+                for r in fac_roles
+            )
 
-            # Optionally research building level / tech upgrades if auto_upgrades is enabled and we have surplus gold
+            # Optionally research building level / tech upgrades if auto_upgrades is enabled, we have surplus gold,
+            # and this factory isn't urgently needed to train our first unit of a missing role
             if (
                 self.doctrine.get("auto_upgrades", True)
-                and money >= 650 + reserve_gold
+                and not fac_needs_first_unit
+                and money >= 650 + factory_reserve_gold
                 and len(my_combat) >= 2
                 and fac_id not in self._upgraded_structures
             ):
@@ -981,7 +1850,7 @@ class FivePillarSubCommander:
                     if b.get("command") in ("OBJECT_UPGRADE", "PLAYER_UPGRADE")
                     and b.get("enabled", False)
                     and b.get("upgrade")
-                    and int(b.get("cost", 300)) <= (money - reserve_gold)
+                    and int(b.get("cost", 300)) <= (money - factory_reserve_gold)
                 ]
                 if upg_btns:
                     upick = upg_btns[0]
@@ -990,6 +1859,7 @@ class FivePillarSubCommander:
                     if ures.get("ok"):
                         money -= int(upick.get("cost", 300))
                         self._upgraded_structures.add(fac_id)
+                        self._fac_btn_cache.pop(fac_id, None)
                         actions.append(f"{fac['template']} #{fac_id} researching upgrade {u_name}")
                         continue
 
@@ -998,7 +1868,7 @@ class FivePillarSubCommander:
                 if b.get("command") == "UNIT_BUILD"
                 and b.get("enabled", False)
                 and b.get("object")
-                and int(b.get("cost", 200)) <= max(0, money - reserve_gold)
+                and int(b.get("cost", 200)) <= max(0, money - factory_reserve_gold)
             ]
             if unit_btns:
                 # Score each buildable unit button by role weight / (1 + 0.35 * existing_count)
@@ -1008,8 +1878,12 @@ class FivePillarSubCommander:
                     u_tmpl = str(b["object"])
                     role = classify_unit_role(u_tmpl)
                     w = float(role_weights.get(role, 1.0))
-                    scarcity = 1.0 / (1.0 + 0.35 * my_role_counts.get(role, 0))
-                    # Small deterministic tie-breaker based on frame + index
+                    if w <= 0.05:
+                        continue
+                    # Don't let low-priority infantry/pike spam eat all Command Points when high-priority cavalry/archer/siege is needed
+                    if high_priority_understaffed and role not in high_priority_understaffed and my_role_counts.get(role, 0) >= 3:
+                        continue
+                    scarcity = 1.0 / (1.0 + 0.45 * my_role_counts.get(role, 0))
                     jitter = 0.05 * ((frame + idx) % 3)
                     score = w * scarcity + jitter
                     if saving_for and saving_for in u_tmpl.lower():
@@ -1026,17 +1900,25 @@ class FivePillarSubCommander:
                         my_role_counts[r] = my_role_counts.get(r, 0) + 1
                         actions.append(f"{fac['template']} #{fac_id} training {u_tmpl} ({r})")
 
-        # Builder expansion (economy target farms vs multi-type military factories)
+        # Builder expansion (Quartermaster planned structures first, then economy target farms & missing factories)
         target_farms = int(self.doctrine.get("economy_target_farms", 5))
-        idle_dozers = [
-            d for d in my_dozers
-            if not d.get("moving") and int(d.get("dozer_target_id", 0)) == 0
-        ]
+        # Automatically expand Farms/Furnaces if Command Points are near the cap (BFME2 max CP is 1000)
+        if cp_limit > 0 and cp_used + 90 >= cp_limit and cp_limit < 1000:
+            target_farms = max(target_farms, min(16, len(my_eco_structs) + 2))
+        idle_dozers = (
+            [d for d in my_dozers if not d.get("moving") and int(d.get("dozer_target_id", 0)) == 0]
+            if run_macro
+            else []
+        )
         unfinished = [s for s in my_structs if s.get("under_construction")]
 
         for dozer in idle_dozers:
-            btns_resp = client.get_command_buttons(int(dozer["id"]))
-            buttons = btns_resp.get("buttons", []) if btns_resp.get("ok") else []
+            dtmpl = str(dozer.get("template", "dozer"))
+            if dtmpl not in self._dozer_btn_cache:
+                btns_resp = client.get_command_buttons(int(dozer["id"]))
+                if btns_resp.get("ok"):
+                    self._dozer_btn_cache[dtmpl] = btns_resp.get("buttons", [])
+            buttons = self._dozer_btn_cache.get(dtmpl, [])
             construct_btns = [
                 b for b in buttons
                 if b.get("command") == "DOZER_CONSTRUCT"
@@ -1051,30 +1933,87 @@ class FivePillarSubCommander:
                 b for b in construct_btns
                 if any(k in str(b.get("object", "")).lower() for k in BARRACKS_KEYWORDS)
             ]
+            armory_choices = [
+                b for b in construct_btns
+                if any(k in str(b.get("object", "")).lower() for k in ARMORY_KEYWORDS)
+            ]
 
             chosen_tmpl: Optional[str] = None
-            desired_factories = 1 if len(my_eco_structs) < 3 else (2 if len(my_eco_structs) < 5 else 3)
-            want_barracks = len(my_eco_structs) >= 2 and len(my_factories) < desired_factories
 
-            if want_barracks and mil_choices:
+            # 1. Check if Quartermaster has a high-priority planned building for this builder
+            if planned_dozer_targets:
+                ptarget = planned_dozer_targets[0]
+                pkind = ptarget.get("kind")
+                pick_btn = None
+                if pkind == "BUILD_ARMORY" and armory_choices:
+                    affordable_arm = [b for b in armory_choices if int(b.get("cost", 1000)) <= money]
+                    if affordable_arm:
+                        pick_btn = affordable_arm[0]
+                elif pkind == "BUILD_STRUCT":
+                    t_sub = str(ptarget.get("target", "")).lower()
+                    matches = [b for b in construct_btns if t_sub in str(b.get("object", "")).lower() and int(b.get("cost", 500)) <= money]
+                    if matches:
+                        pick_btn = matches[0]
+                elif pkind == "BUILD_ROLE_FACTORY" and mil_choices:
+                    r_needed = str(ptarget.get("role", ""))
+                    matches = [
+                        b for b in mil_choices
+                        if r_needed in classify_factory_roles(str(b.get("object", "")))
+                        and int(b.get("cost", 500)) <= money
+                    ]
+                    if matches:
+                        pick_btn = matches[0]
+                elif pkind == "BUILD_FARM" and eco_choices:
+                    affordable_eco = [b for b in eco_choices if int(b.get("cost", 300)) <= money]
+                    if affordable_eco:
+                        pick_btn = affordable_eco[0]
+
+                if pick_btn:
+                    chosen_tmpl = str(pick_btn["object"])
+                    b_cost = int(pick_btn.get("cost", 300))
+                    money -= b_cost
+                    quartermaster_reserved_gold = max(0, quartermaster_reserved_gold - int(ptarget.get("cost", b_cost)))
+                    ptarget["status"] = "EXECUTING"
+                    planned_dozer_targets.pop(0)
+
+            dozer_reserve = max(reserve_gold, quartermaster_reserved_gold)
+            desired_factories = 1 if len(my_eco_structs) < 3 else (2 if len(my_eco_structs) < 5 else 4)
+            need_missing_tech = len(my_eco_structs) >= 2 and bool(missing_desired_roles) and len(my_factories) < 6
+            want_barracks = (len(my_eco_structs) >= 2 and len(my_factories) < desired_factories) or need_missing_tech
+
+            if not chosen_tmpl and want_barracks and mil_choices:
                 affordable = [
                     b for b in mil_choices
-                    if b.get("enabled", True) and int(b.get("cost", 300)) <= max(0, money - reserve_gold)
+                    if b.get("enabled", True) and int(b.get("cost", 300)) <= max(0, money - dozer_reserve)
                 ]
                 if affordable:
                     existing_tmpls = {str(f.get("template", "")).lower() for f in my_factories}
-                    novel = [b for b in affordable if str(b.get("object", "")).lower() not in existing_tmpls]
-                    # Prefer factory matching highest unit_mix_weight role if possible
-                    pick = novel[0] if novel else affordable[0]
-                    chosen_tmpl = str(pick["object"])
-                    money -= int(pick.get("cost", 300))
+
+                    def _score_factory_btn(b: Dict[str, Any]) -> float:
+                        btmpl = str(b.get("object", ""))
+                        froles = classify_factory_roles(btmpl)
+                        sc = max((float(role_weights.get(r, 0.5)) for r in froles), default=0.5)
+                        for r in froles:
+                            if r in missing_desired_roles:
+                                sc += 100.0 * float(role_weights.get(r, 1.0))
+                        if btmpl.lower() not in existing_tmpls:
+                            sc += 15.0
+                        return sc
+
+                    pick = max(affordable, key=_score_factory_btn)
+                    if not need_missing_tech or any(r in missing_desired_roles for r in classify_factory_roles(str(pick.get("object", "")))):
+                        chosen_tmpl = str(pick["object"])
+                        money -= int(pick.get("cost", 300))
+                        for r in classify_factory_roles(chosen_tmpl):
+                            covered_roles.add(r)
+                            missing_desired_roles.discard(r)
 
             if not chosen_tmpl and len(my_eco_structs) < target_farms and eco_choices:
                 reserve_for_barracks = 350 if (len(my_eco_structs) >= 2 and len(my_factories) == 0) else 0
                 affordable = [
                     b for b in eco_choices
                     if b.get("enabled", True)
-                    and int(b.get("cost", 300)) + reserve_for_barracks + reserve_gold <= money
+                    and int(b.get("cost", 300)) + reserve_for_barracks + dozer_reserve <= money
                 ]
                 if affordable:
                     chosen_tmpl = str(affordable[0]["object"])
@@ -1180,12 +2119,20 @@ class FivePillarSubCommander:
         if any(m.get("type") == "RETREAT_ALL" for m in missions):
             far_units = [
                 int(u["id"]) for u in healthy_combat
-                if math.hypot(float(u["x"]) - stage_x, float(u["y"]) - stage_y) > 260.0
+                if math.hypot(float(u["x"]) - stage_x, float(u["y"]) - stage_y) > 280.0
             ]
             if far_units:
                 client.order_move(far_units, stage_x, stage_y, move_type="move")
                 actions.append(f"Executed RETREAT_ALL: pulling {len(far_units)} squad(s) back to staging")
-            return actions, fow_state
+                return actions, fow_state
+            else:
+                # All squads have safely arrived at staging; transition RETREAT_ALL -> DEFEND(home_base)
+                for m in missions:
+                    if m.get("type") == "RETREAT_ALL":
+                        m["type"] = "DEFEND"
+                        m["sector"] = "home_base"
+                        m["note"] = "Regrouped at Home Base — holding defensive perimeter"
+                actions.append("All battalions regrouped at Home Base — holding defensive perimeter")
 
         # Emergency Base Defense Reflex (unless explicitly overridden)
         enemies_threatening_base = [
@@ -1209,16 +2156,32 @@ class FivePillarSubCommander:
                 )
 
         # Assign unassigned healthy squads across active Missions
+        # Prioritize active field operations (SCOUT, CLEAR_CREEPS, CAPTURE_NEUTRAL, RAID, ATTACK) before passive DEFEND
+        # so a DEFEND mission at forward_staging never starves scouts, creep-hunters, or attack waves!
+        active_missions = [m for m in missions if m.get("status") != "COMPLETED"]
+        mission_priority = {
+            "SCOUT": 0,
+            "CLEAR_CREEPS": 1,
+            "CAPTURE_NEUTRAL": 2,
+            "RAID": 3,
+            "ATTACK": 4,
+            "DEFEND": 5,
+            "RETREAT_ALL": 6,
+        }
+        ordered_missions = sorted(
+            active_missions,
+            key=lambda m: mission_priority.get(str(m.get("type", "ATTACK")).upper(), 4),
+        )
+        has_non_defend = any(str(m.get("type", "")).upper() != "DEFEND" for m in ordered_missions)
+
         assigned_unit_ids: set[int] = set()
-        for m in missions:
-            if m.get("status") == "COMPLETED":
-                continue
+        for m in ordered_missions:
             mtype = str(m.get("type", "ATTACK")).upper()
             sector = str(m.get("sector", "center"))
-            via_sector = m.get("via_sector")
+            via_sector = m.get("via_sector") if mtype != "SCOUT" else None
             sfilter = str(m.get("squad_filter", "any")).lower()
             min_squads = int(m.get("min_squads", 1))
-            mid = str(m.get("id", "m"))
+            via_key = f"{mtype}:{sector}:{via_sector or ''}"
 
             # Select candidate squads matching squad_filter
             candidates = []
@@ -1244,7 +2207,7 @@ class FivePillarSubCommander:
                 # Pick 1 fast/light squad
                 candidates.sort(key=lambda u: 0 if classify_unit_role(u) == "cavalry" else 1)
                 picked = candidates[:1]
-            elif mtype in ("RAID", "CLEAR_CREEPS", "CAPTURE_NEUTRAL"):
+            elif mtype in ("RAID", "CLEAR_CREEPS", "CAPTURE_NEUTRAL") or (mtype == "DEFEND" and has_non_defend):
                 picked = candidates[:max(1, min_squads)]
             else:
                 picked = candidates
@@ -1252,19 +2215,29 @@ class FivePillarSubCommander:
             for u in picked:
                 assigned_unit_ids.add(int(u["id"]))
 
-            tx, ty = self.geometry.resolve_sector(sector, neutral_objs)
+            dest_x, dest_y = self.geometry.resolve_sector(sector, neutral_objs)
+            tx, ty = dest_x, dest_y
+            active_dest_label = sector
 
             # Handle two-stage waypoint routing (`via_sector` -> `sector`) for flanking maneuvers
             if via_sector:
                 vx, vy = self.geometry.resolve_sector(str(via_sector), neutral_objs)
                 cx = sum(float(u["x"]) for u in picked) / len(picked)
                 cy = sum(float(u["y"]) for u in picked) / len(picked)
-                if math.hypot(cx - vx, cy - vy) < 380.0:
-                    self._via_reached_by_mission[mid] = True
-                if not self._via_reached_by_mission.get(mid, False):
+                if math.hypot(cx - vx, cy - vy) < 420.0:
+                    self._via_reached_by_mission[via_key] = True
+                if not self._via_reached_by_mission.get(via_key, False):
                     tx, ty = vx, vy
+                    active_dest_label = f"{via_sector} -> {sector}"
 
-            idle_picked = [u for u in picked if not u.get("moving") and not u.get("attacking")]
+            idle_picked = [
+                u for u in picked
+                if not u.get("attacking")
+                and (
+                    not u.get("moving")
+                    or math.hypot(float(u.get("goal_x", 0.0)) - tx, float(u.get("goal_y", 0.0)) - ty) > 280.0
+                )
+            ]
             if not idle_picked:
                 continue
             idle_ids = [int(u["id"]) for u in idle_picked]
@@ -1273,65 +2246,117 @@ class FivePillarSubCommander:
                 lairs = [
                     o for o in neutral_objs
                     if any(k in str(o.get("template", "")).lower() for k in CREEP_LAIR_KEYWORDS)
+                    and "hole" not in str(o.get("template", "")).lower()
+                    and "rubble" not in str(o.get("template", "")).lower()
                 ]
                 if lairs:
-                    target_lair = min(lairs, key=lambda o: math.hypot(float(o["x"]) - tx, float(o["y"]) - ty))
-                    client.order_attack(idle_ids, int(target_lair["id"]))
-                    actions.append(
-                        f"Mission [{mtype}]: {len(idle_ids)} squad(s) assaulting {target_lair['template']} #{target_lair['id']}"
-                    )
+                    target_lair = min(lairs, key=lambda o: math.hypot(float(o["x"]) - base_x, float(o["y"]) - base_y))
+                    lx, ly = float(target_lair["x"]), float(target_lair["y"])
+                    close_ids = [int(u["id"]) for u in idle_picked if math.hypot(float(u["x"]) - lx, float(u["y"]) - ly) <= 280.0]
+                    far_units = [u for u in idle_picked if math.hypot(float(u["x"]) - lx, float(u["y"]) - ly) > 280.0]
+                    if close_ids:
+                        client.order_attack(close_ids, int(target_lair["id"]))
+                        actions.append(
+                            f"Mission [CLEAR_CREEPS]: {len(close_ids)} squad(s) demolishing {target_lair['template']} #{target_lair['id']}"
+                        )
+                    if far_units:
+                        m_ids, _ = self._ready_for_move(far_units, lx, ly, frame, min_dist=200.0)
+                        if m_ids:
+                            client.order_move(m_ids, lx, ly, move_type="attack_move")
+                            actions.append(
+                                f"Mission [CLEAR_CREEPS]: {len(m_ids)} squad(s) marching on {target_lair['template']} at ({lx:.0f}, {ly:.0f})"
+                            )
                 else:
                     m["status"] = "COMPLETED"
 
             elif mtype == "RAID":
-                # Prioritize undefended enemy economy structures near target sector
                 enemy_eco = [
                     e for e in visible_enemies
                     if e.get("fs_cash_producer") or any(k in str(e.get("template", "")).lower() for k in ECONOMY_KEYWORDS)
                 ]
-                if enemy_eco and self._via_reached_by_mission.get(mid, not bool(via_sector)):
+                if enemy_eco and self._via_reached_by_mission.get(via_key, not bool(via_sector)):
                     tgt = min(enemy_eco, key=lambda e: math.hypot(float(e["x"]) - tx, float(e["y"]) - ty))
                     client.order_attack(idle_ids, int(tgt["id"]))
                     actions.append(
                         f"Mission [RAID]: {len(idle_ids)} raider(s) striking enemy {tgt['template']} #{tgt['id']}!"
                     )
                 else:
-                    client.order_move(idle_ids, tx, ty, move_type="attack_move")
-                    actions.append(f"Mission [RAID]: {len(idle_ids)} raider(s) flanking toward ({tx:.0f}, {ty:.0f})")
+                    far_ids, stuck = self._ready_for_move(idle_picked, tx, ty, frame, min_dist=240.0)
+                    if stuck and via_sector and not self._via_reached_by_mission.get(via_key, False):
+                        self._via_reached_by_mission[via_key] = True
+                        tx, ty = dest_x, dest_y
+                        far_ids = [int(u["id"]) for u in idle_picked]
+                        for uid in far_ids:
+                            self._last_move_cmd.pop(uid, None)
+                    elif stuck and not self.intel.enemy_base_discovered and sector in ("enemy_base", "enemy_expansion"):
+                        self.geometry.rotate_enemy_guess()
+                    if far_ids:
+                        client.order_move(far_ids, tx, ty, move_type="attack_move")
+                        actions.append(f"Mission [RAID]: {len(far_ids)} raider(s) flanking toward {active_dest_label} ({tx:.0f}, {ty:.0f})")
+                    elif not self.intel.enemy_base_discovered and sector in ("enemy_base", "enemy_expansion"):
+                        if any(math.hypot(float(u["x"]) - tx, float(u["y"]) - ty) <= 260.0 for u in idle_picked):
+                            self.geometry.rotate_enemy_guess()
 
             elif mtype == "ATTACK":
                 if len(picked) < min_squads and self.doctrine.get("posture") != "aggressive":
-                    # Muster at forward staging until wave is ready
-                    need_stage = [
-                        int(u["id"]) for u in idle_picked
-                        if math.hypot(float(u["x"]) - stage_x, float(u["y"]) - stage_y) > 240.0
-                    ]
+                    need_stage, _ = self._ready_for_move(idle_picked, stage_x, stage_y, frame, min_dist=240.0)
                     if need_stage:
                         client.order_move(need_stage, stage_x, stage_y, move_type="attack_move")
                     continue
 
-                if visible_enemies and self._via_reached_by_mission.get(mid, not bool(via_sector)):
+                if visible_enemies and self._via_reached_by_mission.get(via_key, not bool(via_sector)):
                     cx = sum(float(u["x"]) for u in idle_picked) / len(idle_picked)
                     cy = sum(float(u["y"]) for u in idle_picked) / len(idle_picked)
                     tgt = min(visible_enemies, key=lambda e: math.hypot(float(e["x"]) - cx, float(e["y"]) - cy))
-                    client.order_move(idle_ids, float(tgt["x"]), float(tgt["y"]), move_type="attack_move")
-                    actions.append(
-                        f"Mission [ATTACK]: {len(idle_ids)} squad(s) advancing on {tgt['template']} at ({tgt['x']:.0f}, {tgt['y']:.0f})"
-                    )
+                    t_ids, _ = self._ready_for_move(idle_picked, float(tgt["x"]), float(tgt["y"]), frame, min_dist=80.0)
+                    if t_ids:
+                        client.order_move(t_ids, float(tgt["x"]), float(tgt["y"]), move_type="attack_move")
+                        actions.append(
+                            f"Mission [ATTACK]: {len(t_ids)} squad(s) advancing on {tgt['template']} at ({tgt['x']:.0f}, {tgt['y']:.0f})"
+                        )
                 else:
-                    client.order_move(idle_ids, tx, ty, move_type="attack_move")
-                    actions.append(f"Mission [ATTACK]: {len(idle_ids)} squad(s) marching toward {sector} ({tx:.0f}, {ty:.0f})")
+                    far_ids, stuck = self._ready_for_move(idle_picked, tx, ty, frame, min_dist=240.0)
+                    if stuck and via_sector and not self._via_reached_by_mission.get(via_key, False):
+                        self._via_reached_by_mission[via_key] = True
+                        tx, ty = dest_x, dest_y
+                        far_ids = [int(u["id"]) for u in idle_picked]
+                        for uid in far_ids:
+                            self._last_move_cmd.pop(uid, None)
+                    elif stuck and not self.intel.enemy_base_discovered and sector in ("enemy_base", "enemy_expansion"):
+                        self.geometry.rotate_enemy_guess()
+                    if far_ids:
+                        client.order_move(far_ids, tx, ty, move_type="attack_move")
+                        actions.append(f"Mission [ATTACK]: {len(far_ids)} squad(s) marching toward {active_dest_label} ({tx:.0f}, {ty:.0f})")
+                    elif not self.intel.enemy_base_discovered and sector in ("enemy_base", "enemy_expansion"):
+                        if any(math.hypot(float(u["x"]) - tx, float(u["y"]) - ty) <= 260.0 for u in idle_picked):
+                            self.geometry.rotate_enemy_guess()
 
             elif mtype in ("SCOUT", "DEFEND", "CAPTURE_NEUTRAL"):
-                far_ids = [
-                    int(u["id"]) for u in idle_picked
-                    if math.hypot(float(u["x"]) - tx, float(u["y"]) - ty) > 230.0
-                ]
-                if far_ids:
+                far_ids, stuck = self._ready_for_move(idle_picked, tx, ty, frame, min_dist=240.0)
+                if stuck:
+                    self.intel.explored_sectors.add(sector)
+                    if mtype == "SCOUT":
+                        if not self.intel.enemy_base_discovered:
+                            m["sector"] = "enemy_base"
+                            self.geometry.rotate_enemy_guess()
+                            ntx, nty = self.geometry.resolve_sector("enemy_base")
+                            uid_list = [int(u["id"]) for u in idle_picked]
+                            for uid in uid_list:
+                                self._last_move_cmd.pop(uid, None)
+                            client.order_move(uid_list, ntx, nty, move_type="attack_move")
+                            actions.append(f"Mission [SCOUT]: redirecting scout to search candidate enemy_base ({ntx:.0f}, {nty:.0f})")
+                        else:
+                            m["status"] = "COMPLETED"
+                elif far_ids:
                     client.order_move(far_ids, tx, ty, move_type="attack_move")
-                    actions.append(f"Mission [{mtype}]: {len(far_ids)} squad(s) moving to {sector} ({tx:.0f}, {ty:.0f})")
-                elif mtype == "SCOUT" and sector in self.intel.explored_sectors:
-                    m["status"] = "COMPLETED"
+                    actions.append(f"Mission [{mtype}]: {len(far_ids)} squad(s) moving to {active_dest_label} ({tx:.0f}, {ty:.0f})")
+                elif mtype == "SCOUT" and any(math.hypot(float(u["x"]) - tx, float(u["y"]) - ty) <= 280.0 for u in idle_picked):
+                    self.intel.explored_sectors.add(sector)
+                    if not self.intel.enemy_base_discovered:
+                        m["sector"] = "enemy_base"
+                        self.geometry.rotate_enemy_guess()
+                    else:
+                        m["status"] = "COMPLETED"
 
         # Any remaining unassigned idle units stage at forward_staging
         unassigned_idle = [
@@ -1367,7 +2392,7 @@ def _load_server_secrets() -> Tuple[str, str]:
 
     if not litellm_key:
         try:
-            env_file = pathlib.Path("/home/plympe01/workspace/ollama/.env")
+            env_file = pathlib.Path.home().joinpath("workspace", "ollama", ".env")
             if env_file.exists():
                 for line in env_file.read_text(errors="ignore").splitlines():
                     if line.strip().startswith("LITELLM_MASTER_KEY="):
@@ -1378,8 +2403,14 @@ def _load_server_secrets() -> Tuple[str, str]:
     return gemini_key, litellm_key
 
 
-SYSTEM_PROMPT_COMMANDER = """You are a BFME2 Field General. Output ONLY valid JSON matching:
-{"dispatch":"1-sentence report","doctrine":{"posture":"aggressive|balanced|defensive|boom","economy_target_farms":1..9,"reserve_gold":0..3000,"saving_for":null|str,"attack_wave_size":1..8,"retreat_health_threshold":0.15..0.55,"auto_counter_production":bool,"auto_upgrades":bool,"unit_mix_weights":{"infantry":0..3,"pike":0..3,"archer":0..3,"cavalry":0..3,"siege":0..3},"missions":[{"type":"SCOUT|DEFEND|CLEAR_CREEPS|CAPTURE_NEUTRAL|RAID|ATTACK|RETREAT_ALL","sector":"home_base|forward_staging|center|north_flank|south_flank|east_flank|west_flank|enemy_base|enemy_expansion|nearest_creep_lair|nearest_outpost","via_sector":null|"north_flank"|"south_flank","squad_filter":"any|infantry|pike|archer|cavalry|siege|hero","min_squads":1..6,"note":str}]}}"""
+SYSTEM_PROMPT_COMMANDER = """You are a BFME2 Field General advising your High King.
+Rules:
+1. Every action you claim in `dispatch` MUST be backed by concrete fields in `doctrine` (`missions`, `active_goal`, `unit_mix_weights`, `posture`).
+2. When `enemy_base_discovered` is false, locate the foe by assigning `{"type":"SCOUT","sector":"enemy_base","via_sector":null,"squad_filter":"any","min_squads":1}` (which automatically sweeps candidate map spawn points). Never set `via_sector` on `SCOUT`.
+3. Do NOT leave the main army idle at `DEFEND forward_staging` once `my_combat_squads` has >= `attack_wave_size` (3+) squads unless an `active_goal` decree requires holding; instead issue an `ATTACK` (and/or `RAID`) mission on `sector: "enemy_base"`.
+4. When the High King decrees a persistent objective (e.g. "save for Gandalf", "defend until we equip all deployed units with full upgrades", "pull back and build 10 farms"), populate `active_goal` with a declarative `until_state` partial state so the Quartermaster & Backward-Chaining Planner lock budget and prerequisites until satisfied.
+Output ONLY valid JSON matching:
+{"dispatch":"1-sentence in-character reply","doctrine":{"posture":"aggressive|balanced|defensive|boom","economy_target_farms":1..16,"reserve_gold":0..3000,"saving_for":null|str,"attack_wave_size":1..8,"retreat_health_threshold":0.15..0.55,"auto_counter_production":bool,"auto_upgrades":bool,"unit_mix_weights":{"infantry":0..3,"pike":0..3,"archer":0..3,"cavalry":0..3,"siege":0..3},"active_goal":null|{"description":str,"until_state":{"hero_recruited":null|str,"min_gold":null|int,"min_farms":null|int,"required_structures":[str],"min_total_squads":null|int,"min_role_squads":{"cavalry":int,"archer":int,"pike":int,"infantry":int,"siege":int},"upgraded_squad_ratio":null|0.0..1.0,"all_squads_at_sector":null|str},"on_complete":"resume_autopilot|hold_posture"},"missions":[{"type":"SCOUT|DEFEND|CLEAR_CREEPS|CAPTURE_NEUTRAL|RAID|ATTACK|RETREAT_ALL","sector":"home_base|forward_staging|center|north_flank|south_flank|east_flank|west_flank|enemy_base|enemy_expansion|nearest_creep_lair|nearest_outpost","via_sector":null|"north_flank"|"south_flank"|"east_flank"|"west_flank"|"center","squad_filter":"any|infantry|pike|archer|cavalry|siege|hero","min_squads":1..6,"note":str}]}}"""
 
 
 class LLMCommanderBridge:
@@ -1438,6 +2469,8 @@ class LLMCommanderBridge:
             "posture": current_doctrine.get("posture"),
             "farms": current_doctrine.get("economy_target_farms"),
             "reserve_gold": current_doctrine.get("reserve_gold"),
+            "saving_for": current_doctrine.get("saving_for"),
+            "active_goal": current_doctrine.get("active_goal"),
             "wave": current_doctrine.get("attack_wave_size"),
             "weights": current_doctrine.get("unit_mix_weights"),
             "missions": [
@@ -1456,7 +2489,11 @@ class LLMCommanderBridge:
             "task": (
                 f"ORDER: {human_order}"
                 if human_order
-                else "AUTONOMOUS REVIEW: Update doctrine and missions from Fog-of-War intel."
+                else (
+                    "AUTONOMOUS REVIEW: Update doctrine and missions from Fog-of-War intel. "
+                    "Ensure every action you claim in 'dispatch' is backed by a concrete mission in 'doctrine.missions'. "
+                    "If my_combat_squad_count >= doctrine.wave, include an ATTACK or RAID mission on 'enemy_base'."
+                )
             ),
         }
         prompt_str = json.dumps(user_prompt, separators=(",", ":"))
